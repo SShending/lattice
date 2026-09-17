@@ -1,306 +1,104 @@
-# Lattice V0 Design
+# Lattice V0 design
 
-## 1. Problem
+This is the product and study-loop contract for the [agreed direction](../INIT.md). Implementation boundaries are defined in [Architecture](architecture.md); tasks live in the [Development plan](development-plan.md).
 
-The current Learning Coach workflow runs inside a general-purpose agent environment. Updating learning state and writing learning notes are therefore optional behaviors that the model may omit while focusing on the visible conversation.
+## Responsibility boundary
 
-Lattice changes the responsibility boundary:
+Lattice turns learning bookkeeping into application control flow. Teaching and interpretation remain model-driven; validation, persistence, and completion are deterministic runtime responsibilities.
 
-- Teaching remains model-driven.
-- Learning-state interpretation is explicit.
-- Persistence is enforced by the runtime.
-- `state` and `notes` are not optional tool calls available to the Tutor.
+Two loops remain distinct:
 
-The V0 design focuses on reliability before adding richer learning capabilities.
+- **Codex agent loop:** model → tools → observations → model → response.
+- **Lattice study loop:** load learner context → Tutor → Learning Reducer → validate → persist → publish completion.
 
-## 2. Design objective
+The Study Runtime lives in the Lattice Local Server, above Codex. It is not a Codex plugin or a replacement agent harness. Tutor and Reducer are sequential roles invoked through the same Codex adapter, not autonomous agents.
 
-V0 must support one persistent study topic across multiple turns and sessions.
+## Primary views
 
-A successful V0 should guarantee that:
+| View | Content | V0 interactions and acceptance |
+| --- | --- | --- |
+| Study | Active topic, conversation, current focus, turn phase, recent learning checkpoints | Send, cancel generation, retry failed finalization, start/resume a session. Stream the answer; show “Saving learning changes” until commit, then a summary with links to changed notes/state. |
+| Topics | Existing topic titles, goals, focus, last recorded activity | Explicitly select a topic or browse another. A switch starts/resumes that topic's session only after the current turn reaches a safe terminal state. Invalid topics show an actionable validation error. |
+| Roadmap | Existing topic milestones/order and current focus, linked to relevant state | Read-only navigation in V0. Missing roadmap data shows an empty state, not an invented plan or inferred mastery percentage. |
+| Notes | Topic note list, rendered Markdown, source and revision details | Open, create, edit, preview, save, or discard an unsaved draft. Existing note deletion is deferred. Changes from a turn are visibly marked after commit. |
+| State | Goal, focus, evidence-backed understanding, uncertainty, misconceptions, next objective | Edit supported fields through a validated form. Show the revision and origin of changes; preserve unsupported fields. Corrections are recorded as user edits, not fabricated assessment evidence. |
 
-1. The current learner state is loaded before each study turn.
-2. The Tutor receives only the learner context needed for the active topic.
-3. The Tutor can focus on teaching rather than storage responsibilities.
-4. A separate Learning Reducer evaluates each completed turn.
-5. The resulting state update is validated before persistence.
-6. The authoritative topic state is written before the study turn is considered complete.
-7. A durable note is written when the Reducer marks the turn as note-worthy.
-8. Restarting Lattice restores the learner from the persisted topic state rather than reconstructing progress from chat history alone.
+Layout is flexible: topic navigation, a central study area, and a state panel are a useful starting point. Views share the active topic and committed revision, not separate copies of learning data.
 
-## 3. Architectural boundary
+All views distinguish loading, empty, invalid, disconnected, and ready states. Notes/State editors distinguish draft, saving, saved, failed, and conflict states. Preserve drafts while browsing or receiving updates; prompt before discarding them. A successful edit returns the new committed revision and updates relevant views. No change badge or “Saved” claim precedes persistence.
 
-Lattice V0 does **not** reimplement an agent harness.
+Browsing and local editing work without a Codex connection. A browser refresh reloads committed records; pending drafts must be explicitly warned about or recoverable, never represented as saved.
 
-DeepSeek Harness provides the generic agent runtime responsibilities, including the default model/tool loop and session execution. Lattice adds the study-specific lifecycle around that runtime.
+## Learning domain
 
-```text
-                 Lattice
-                    │
-        ┌───────────┴───────────┐
-        │                       │
- DeepSeek Harness        Lattice Study Runtime
- default agent loop             │
-        │               ┌───────┴────────┐
-        │               │                │
-      Model       Context Loader   Learning Reducer
-                                 + Persistence
-                         │
-                  local learning-vault
-                         │
-                        Git
-                         │
-                GitHub remote (optional)
-```
+**Topic State** is the durable learner model: topic identity, goal, current focus, understanding and supporting evidence, uncertainties, misconceptions, and next objective. These are conceptual fields to map onto the actual vault schema, not a replacement schema.
 
-DeepSeek Harness is the only harness in V0. OpenAI models may later be used through a model provider, but OpenAI Agents API is not part of the architecture.
+**Study Session** ties an explicit topic to a sequence of Lattice turns. It may reference a Codex thread, but a fresh Codex thread can continue learning from the vault. Session/thread identifiers are not topic identifiers.
 
-## 4. Core domain objects
+**Study Turn** has a stable Lattice ID, session/topic ID, input, loaded revision, Tutor result, lifecycle status, and references to reduction/commit results. Codex execution completion only ends the Tutor phase.
 
-### Topic State
+**Study Update** is a validated proposal: turn ID, base revision, state changes, evidence references, and zero or more note candidates. Permit an explicit no-change result with a reason. It still requires a durable checkpoint recording that the turn was evaluated; do not manufacture progress to force a state mutation.
 
-The durable representation of what the learner currently knows about one topic.
+**Learning Note** preserves a reusable explanation, distinction, error correction, or mental model. It is not automatically a transcript summary. Notes have stable identity and provenance; edits preserve user text unless an explicit non-conflicting change is accepted.
 
-It should remain compatible with the existing `learning-vault/topics/<topic-id>/state.json` model rather than introducing a second source of truth.
+**Checkpoint** links the turn and committed revision to its learning evidence and changes. Keep it compact; avoid duplicating full Codex transcripts in the vault.
 
-Topic State should capture, at minimum:
+## Tutor and Learning Reducer
 
-- topic identity
-- learning goal
-- current focus
-- established understanding / evidence
-- uncertain or partially understood concepts
-- known misconceptions when present
-- next learning objective
+Before each turn, load the authoritative topic state and a bounded set of relevant notes. Build fresh context including goal, focus, known understanding, uncertainties, misconceptions, and next objective. Never send the entire vault by default. Treat note content as learning data, not executable instructions.
 
-### Study Turn
+The Tutor provides the smallest useful teaching interaction: explanation, diagnostic question, application, or correction. It has no direct write access to authoritative state, notes, or checkpoints.
 
-One learning interaction consisting of:
+The Reducer receives the frozen starting state, learner input, completed Tutor answer, and relevant evidence. It proposes changes conservatively. Valid evidence includes explanation in the learner's own words, application to a new case, distinctions, and correction of a misconception. Tutor statements and “I understand” alone do not establish mastery. Validate field types, topic identity, base revision, evidence references, and allowed note operations before applying anything.
 
-- learner message
-- Tutor response
+A no-change update is legitimate. The runtime always evaluates note-worthiness and persists accepted notes, but does not require a new note every turn. A reducer-generated note update must not erase manual edits.
 
-A Study Turn is conversational evidence, not yet durable learner state.
-
-### Study Update
-
-The structured interpretation produced by the Learning Reducer after a Study Turn.
-
-It should describe only what changed because of the turn, such as:
-
-- new evidence of understanding
-- uncertainty
-- misconception correction
-- current-focus change
-- next-step change
-- note candidate
-
-### Learning Note
-
-A durable, reusable explanation or mental model worth keeping beyond the immediate turn.
-
-A note is not a transcript summary. It should capture reusable understanding, distinctions, mistakes, or mental models that are likely to matter later.
-
-## 5. Tutor and Reducer separation
-
-V0 intentionally separates teaching from state management.
-
-### Tutor responsibility
-
-The Tutor answers one question:
-
-> Given the learner's current state, what is the smallest useful next teaching interaction?
-
-The Tutor may explain, ask a diagnostic question, correct a misconception, or connect the current concept to prior knowledge.
-
-The Tutor does **not** directly write `state.json` or notes.
-
-### Learning Reducer responsibility
-
-The Reducer answers a different question:
-
-> Given the previous Topic State and this Study Turn, what changed in the learner model?
-
-Conceptually:
+## Study-loop lifecycle
 
 ```text
-previous Topic State + Study Turn → Study Update
+accepted → loading → tutoring → reducing → validating → persisting → completed
+                          ↘ awaiting approval ↗
+pre-commit failures → failed / cancelled / interrupted
+revision mismatch   → conflict
 ```
 
-The Reducer should be structured and conservative. It should prefer explicit evidence over assumptions such as treating “I understand” as mastery.
+1. Accept an input with a stable idempotency key; resolve and freeze its topic/session.
+2. Load a committed snapshot and its revision; block if that topic needs recovery.
+3. Build bounded context and run the Tutor through Codex App Server.
+4. Stream provisional answer events. Reflect any supported approval request explicitly.
+5. After a successful Tutor result, run the separate Reducer.
+6. Validate the Study Update; reject malformed, unrelated, or unsupported mutations.
+7. Recheck revisions and persist state, accepted notes, and checkpoint as one recoverable logical transaction.
+8. Publish the new revision, change summary, and `completed` only after durable commit.
 
-Useful evidence includes:
+No successful Study Turn completes before learner-state persistence succeeds. When state content is unchanged, checkpoint the validated no-op against the unchanged state revision. Required notes and checkpoints are part of the completion barrier, not best-effort work after it.
 
-- correct explanation in the learner's own words
-- correct application to a new case
-- successful distinction between similar concepts
-- correction of a previously observed misconception
-- identification of a remaining uncertainty
+## Failure, cancellation, and resumption
 
-## 6. Study-turn lifecycle
+| Situation | Required behavior |
+| --- | --- |
+| Tutor fails, quota is exhausted, or sign-in expires | Keep prior learning records; display the reason and any partial answer as incomplete. User can retry after resolving the cause. |
+| Reducer output is invalid or generation fails | Keep the Tutor answer and mark finalization failed. Allow bounded explicit retry of reduction, not automatic re-teaching. |
+| Persistence fails | Do not claim completion. Retain the validated update in recovery metadata and finish or recover it before further writes to that topic. |
+| Revision changed after context load | Reject the stale proposal; preserve both the user's saved edit and draft. Reload and re-reduce against current state or let the user abandon the pending update. Never replay stale patches blindly. |
+| Browser disconnects | Server retains ownership of the turn. Reconnection obtains its current status/revision without resubmitting the input. |
+| User cancels before commit begins | Interrupt the active Codex work where applicable, mark the turn cancelled, and do not apply learning changes. A partial answer is not evidence of a completed interaction. |
+| Cancellation arrives during commit | Finish/recover the transaction to a definite outcome; cancellation cannot imply a rollback of a completed save. |
+| Server restarts | Recover journaled persistence first. Mark unfinished generation interrupted; never silently repeat model work. Resume the topic from its committed state, using a new Codex thread if necessary. |
 
-Every V0 turn follows the same lifecycle:
+V0 admits only one in-flight study turn. Topic browsing remains available; switching the study target waits for completion or cancellation/recovery. User saves may proceed during generation through revision checks, causing stale reduction to conflict; they serialize with commit/recovery. A topic with unresolved recovery cannot accept writes.
 
-```text
-1. User input
-2. Resolve active topic
-3. Load authoritative Topic State
-4. Load only necessary related notes
-5. Assemble learner context
-6. Run Tutor through the DSH default agent loop
-7. Produce Tutor response
-8. Run Learning Reducer on previous state + completed Study Turn
-9. Validate Study Update
-10. Persist updated Topic State
-11. Persist note if note-worthy
-12. Append a lightweight session checkpoint if required by the vault model
-13. Mark the study turn complete
-```
+## V0 acceptance scenario
 
-The critical invariant is:
+1. Open the local UI against an existing topic with non-empty state, notes, and a roadmap if present.
+2. Inspect all five views; missing optional records show honest empty states.
+3. Start a fresh Codex-backed session and verify continuity from the vault.
+4. Complete turns demonstrating understanding, uncertainty, a corrected misconception, a reusable note, and a trivial no-change exchange.
+5. Observe streaming → saving → saved. Verify appropriate state/notes/checkpoints and inspect why each change occurred.
+6. Edit a note and state field in the UI. Reload and start another turn; both changes remain authoritative and influence context.
+7. Make an overlapping edit during generation. Verify conflict handling preserves the user's work.
+8. Inject invalid reducer output, write failure, duplicate delivery, cancellation, browser reconnect, and process interruption during each commit stage. Verify no false completion, duplicate note, or silent overwrite.
+9. Restart with a fresh Codex thread and verify learning continuity; do not unnecessarily reteach already demonstrated knowledge.
+10. Disconnect Codex and verify local browsing/editing still works. Confirm no successful learning save depends on a Tutor choosing a write tool.
 
-> **No successful Study Turn completes before learner-state persistence succeeds.**
-
-This replaces prompt-level reminders such as “remember to update state” with a runtime guarantee.
-
-## 7. Persistence model
-
-V0 uses a **local checkout of `learning-vault`**.
-
-The existing topic layout remains the source of truth:
-
-```text
-learning-vault/
-└── topics/
-    └── <topic-id>/
-        ├── state.json
-        ├── README.md
-        ├── notes/
-        └── sessions/
-```
-
-Lattice should access the vault through a small repository abstraction so storage remains replaceable later, but the V0 implementation target is only the local filesystem.
-
-### Why local first
-
-GitHub is not part of the per-turn study path because remote persistence would introduce unnecessary failure modes:
-
-- network dependency
-- connector permissions
-- API latency
-- branch conflicts
-- duplicate writes
-- commit coordination
-
-The runtime responsibility ends when the local vault is durably updated.
-
-Git remains useful for version history and synchronization, but Git/GitHub synchronization is a separate concern from learning correctness.
-
-## 8. Why state and notes are not Tutor tools
-
-V0 may internally have functions or services that save state and notes, but they are not exposed as optional model tools such as `write_note()` or `update_state()`.
-
-The distinction is architectural:
-
-```text
-Tutor tool call
-→ model may choose whether to call it
-→ can be skipped
-
-Runtime persistence operation
-→ executed by lifecycle control
-→ cannot be skipped on a successful turn
-```
-
-The model may decide **what** changed and **what** is worth noting. The runtime decides that valid updates are actually persisted.
-
-## 9. Context policy
-
-Lattice should not place the entire vault in model context.
-
-For V0, the Tutor receives a compact learner context for the active topic, such as:
-
-- topic and goal
-- current focus
-- established understanding / evidence
-- current uncertainties
-- known misconceptions
-- next learning objective
-- a small set of directly relevant durable notes
-
-This context should be regenerated from the authoritative vault state each turn.
-
-The DSH session history remains useful conversation context, but it is not the learner model.
-
-## 10. Active topic policy
-
-V0 supports **one active topic per study session**.
-
-Topic selection is explicit. There is no automatic topic router in V0.
-
-This avoids early ambiguity about whether a turn belongs to multiple overlapping topics. Cross-topic relationships can be added after the single-topic state transition is reliable.
-
-## 11. Relationship between DSH session and Lattice state
-
-These two concepts must remain separate.
-
-### DSH session
-
-Represents execution and conversation history: what happened during an agent session.
-
-### Lattice learner state
-
-Represents accumulated learning progress: what the learner currently understands, where uncertainty remains, and what should happen next.
-
-A new DSH session should therefore be able to continue an existing Lattice topic by loading its persisted Topic State.
-
-## 12. V0 components
-
-Only five conceptual components are required:
-
-1. **Study Runtime Plugin** — owns the study lifecycle and invariants.
-2. **Tutor** — performs normal teaching interaction.
-3. **Learning Reducer** — converts turns into structured Study Updates.
-4. **Vault Repository** — reads and persists local learning-vault data.
-5. **Study CLI / entry point** — starts a session with an explicit topic.
-
-The exact DSH extension points should be chosen during implementation after validating the current DSH plugin/lifecycle APIs. V0 should keep this integration surface deliberately small because DSH is still evolving.
-
-## 13. Explicit non-goals
-
-V0 does not include:
-
-- custom DSH agent loop
-- OpenAI Agents API
-- GitHub connector in the learning loop
-- automatic push or commit
-- multi-topic automatic routing
-- cross-topic graph
-- vector database
-- semantic note retrieval infrastructure
-- subagents
-- planner agent
-- note agent
-- curator agent
-- review scheduler
-- spaced repetition
-- automatic learning-strategy adaptation
-- idea-vault integration
-- UI beyond the minimum study entry point
-
-These may become later versions only if the core state-transition model proves reliable.
-
-## 14. V0 success criteria
-
-V0 is complete when the following scenario works reliably:
-
-1. Start Lattice on an existing `learning-vault` topic.
-2. Lattice restores that topic's learner state.
-3. Complete multiple teaching turns.
-4. Each turn produces a validated state transition.
-5. Relevant notes are persisted without relying on the Tutor to remember a write tool.
-6. Stop the process.
-7. Start a new session on the same topic.
-8. Lattice continues from the persisted learner state without unnecessarily restarting or repeating mastered material.
-
-The main metric is not feature count. It is **state continuity and persistence reliability**.
+The exact [V0 scope and non-goals](../INIT.md#non-goals) remain binding throughout these checks.

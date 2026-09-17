@@ -1,164 +1,95 @@
-# Lattice V0 Development Plan
+# Lattice V0 development plan
 
-This document turns the V0 design into a development sequence without committing to implementation details too early.
+## Current position
 
-## Phase 0 — Validate assumptions
+The repository contains documentation only. The user has agreed to [the V0 direction](../INIT.md); no implementation phase is complete or in progress. This plan replaces the former DSH integration sequence. Keep at most one task in progress and attach acceptance evidence before marking it complete.
 
-Before writing implementation code:
+Source paths below are proposed module locations, to finalize in Phase 0. No files listed as implementation targets have been created. Each phase depends on the preceding phase unless noted. Use synthetic or redacted vault fixtures.
 
-- confirm the current DeepSeek Harness plugin and lifecycle extension points suitable for:
-  - injecting learner context before a Tutor turn
-  - running persistence before a study turn is considered complete
-- confirm the current `learning-vault` topic-state schema and note conventions
-- decide how the active topic is supplied to a session
-- define failure semantics for invalid reducer output or failed local persistence
+## Phase 0 — Verify integration contracts
 
-Output of this phase:
+**Task 0.1 — Codex contract. Status: pending.**
 
-- a small integration contract between Lattice and DSH
-- a small integration contract between Lattice and `learning-vault`
+- Outcome: a reproducible, versioned App Server integration specification.
+- Files: update `docs/architecture.md`; add `docs/codex-contract.md` with the tested version, prerequisites, exact protocol operations, permission profile, and reproducible smoke procedure.
+- Work: inspect the installed Codex protocol/schema; verify stdio initialization, account status/ChatGPT login, thread start/resume, streaming, terminal error, interrupt, approval handling, and structured Reducer output. Verify canonical vault writes are denied to model tools. Decide isolated Tutor/Reducer thread handling and model configuration without hardcoding unsupported models.
+- Verification: automated protocol smoke fixtures for success/error/unknown events; a manual account sign-in and interrupted turn. Record observed results and unsupported capabilities. Never record credentials.
+- Acceptance: no uncertain completion/auth/permission behavior is hidden behind prompts; the supported version and adapter contract are documented.
 
-## Phase 1 — Read-only continuity
+**Task 0.2 — Vault and stack contract. Status: pending.**
 
-Goal: prove that Lattice can start from the existing learner state without modifying it.
+- Dependency: actual vault schema access; do not guess private fields if unavailable.
+- Files: add `docs/vault-contract.md`; update architecture and this plan with selected stack and final paths.
+- Work: inspect state, roadmap, note, and session conventions; define lossless mappings and revisions, metadata placement, transaction recovery, retention, and note identity. Choose a small Web/server stack supporting child processes and local filesystem operations. Record initial supported OS/browser and launcher prerequisites.
+- Verification: round-trip redacted representative records including unknown fields; manually compare each view projection to its source. Review no-op, failed save, and conflicting external edit examples.
+- Acceptance: exact mapping and write/recovery protocol are specified; fixture expectations preserve existing data. Any required migration is explicit and separately approved before execution.
 
-Required behavior:
+## Phase 1 — Local Web shell and readable vault
 
-1. Select one explicit topic.
-2. Load that topic's authoritative `state.json` from a local `learning-vault` checkout.
-3. Build a compact learner-context projection.
-4. Inject that context into the Tutor turn.
-5. Verify that the Tutor can continue from the recorded learning state instead of restarting the topic.
+**Task 1.1 — Five views. Status: pending.**
 
-Do not write state or notes yet.
+- Files: proposed `web/`, `server/`, `runtime/vault/`, `tests/fixtures/`; update README with real startup instructions only once verified.
+- Work: serve same-origin UI/API on loopback; configure one vault; render Study shell, Topics, Roadmap, Notes, and State. Add explicit topic navigation, Markdown rendering, schema errors, empty states, and committed revisions. No model integration or canonical writes yet.
+- Automated verification: fixture projections, unknown-field preservation on reads, path containment, hostile Markdown, rejected cross-origin mutations, correct topic isolation.
+- Human verification: open a representative topic and navigate every view; verify empty/missing roadmap and unavailable Codex do not prevent browsing.
+- Acceptance: all five views match source records without modifying the vault.
 
-Exit condition:
+## Phase 2 — Reliable persistence and user editing
 
-- a fresh DSH session can resume an existing topic coherently from the local vault.
+**Task 2.1 — Transactional repository. Status: pending.**
 
-## Phase 2 — Structured Learning Reducer
+- Files: proposed `runtime/vault/`, `tests/persistence/`; update vault contract.
+- Work: implement revision checks, writer lock, durable journal/staging, atomic per-file replacement, commit records, idempotency, and startup recovery. Keep metadata separate from domain content.
+- Automated verification: inject failures before/after each file replacement and commit marker, replay operation IDs, simulate a second writer and external edit, and verify restart outcomes. Check that state+notes+checkpoint never produce false successful completion.
+- Human verification: inspect recovered fixture files and an intentionally conflicted transaction.
+- Acceptance: recovery proves the invariants in architecture before model-driven writes exist.
 
-Goal: separate teaching from state interpretation.
+**Task 2.2 — Notes and State editors. Status: pending.**
 
-Required behavior:
+- Files: proposed `web/`, `server/`, `runtime/vault/`, `tests/editing/`.
+- Work: note creation/editing and supported State forms; draft/save/error/conflict states, origin records, validation, revision-aware saves, and view refresh events. Preserve unknown fields and unsaved drafts.
+- Automated verification: save/reload, invalid fields, duplicate save, stale revision, incoming update with open draft, and user-correction provenance.
+- Human verification: edit note/state, restart, inspect saved data, and resolve a competing browser-tab edit.
+- Acceptance: edits survive restart, remain visible, and cannot be silently overwritten.
 
-1. Capture the previous Topic State.
-2. Capture the completed Study Turn.
-3. Run the Learning Reducer.
-4. Produce a structured Study Update.
-5. Validate the update against a strict schema.
+## Phase 3 — Codex-backed Tutor and study control
 
-The Reducer should initially focus on a very small set of changes:
+**Task 3.1 — Read-only tutoring integration. Status: pending.**
 
-- evidence of understanding
-- uncertainty
-- misconception changes
-- current focus
-- next learning objective
-- optional note candidate
+- Files: proposed `runtime/codex/`, `runtime/study/`, `server/`, `web/`, `tests/codex/`.
+- Work: implement the verified adapter, authentication status, context builder, thread/session mapping, streaming, cancellation, and explicit approval behavior. One in-flight turn; stable topic identity; disconnect/reconnect status recovery.
+- Automated verification: protocol fixtures for auth failure, quota error, approval, child exit, duplicate/out-of-order events, cancellation, and browser reconnect. Assert model tools cannot mutate canonical learning files.
+- Human verification: start a fresh thread on existing learner state; inspect coherent continuity and visible interruption.
+- Acceptance: Tutor answers stream from current vault context. Until Phase 4 lands, label this a development-only read-only preview; never present it as a completed/saved Study Turn.
 
-Exit condition:
+## Phase 4 — Complete the Study Runtime
 
-- repeated test turns produce valid, conservative Study Updates without changing vault files.
+**Task 4.1 — Reducer and commit barrier. Status: pending.**
 
-## Phase 3 — Deterministic state persistence
+- Files: proposed `runtime/study/`, `runtime/reducer/`, `tests/study/`; update V0 design with any clarified behavior.
+- Work: isolated Reducer invocation, strict Study Update validation, evidence provenance, explicit no-op, note-worthiness and identity, checkpoint construction, revision recheck, and transactional finalization. Retry reduction/persistence without automatically repeating tutoring; bound retries and show failure.
+- Automated verification: conservative evidence cases, malformed/foreign-topic updates, no-op checkpoint, note deduplication, manual edit during generation, partial persistence, cancellation race, and repeated completion events.
+- Human verification: exercise understanding, uncertainty, correction, useful note, and trivial turns; inspect state and note changes.
+- Acceptance: no path publishes successful turn completion before all required writes are durable; no fabricated mastery or stale overwrite.
 
-Goal: solve the main Learning Coach reliability problem.
+**Task 4.2 — Visible learning changes and session continuity. Status: pending.**
 
-Required behavior:
+- Files: proposed `web/`, `server/`, `runtime/study/`, `tests/e2e/`.
+- Work: saving/saved/error feedback, links to changed notes/state, compact session history, resume/retry controls, and safe topic switching. Reconcile SSE gaps from authoritative snapshots.
+- Automated verification: lost completion event, refresh during save, restart after commit, stale drafts, topic switching, and fresh Codex thread with existing state.
+- Human verification: see a new note appear and state change only after commit; edit each and confirm the next turn uses the edits.
+- Acceptance: a learner can tell what changed, whether it is saved, and what to do when it is not.
 
-1. Apply a validated Study Update to Topic State.
-2. Persist the resulting authoritative `state.json` locally.
-3. Treat failed persistence as a failed study turn rather than silently completing the turn.
-4. Restart Lattice and verify that the persisted state is restored.
+## Phase 5 — V0 acceptance and handoff
 
-Persistence should be safe against partial writes. The exact atomic-write strategy is an implementation detail to decide in this phase.
+**Task 5.1 — Repeatable end-to-end evidence. Status: pending.**
 
-Exit condition:
+- Files: proposed `tests/e2e/`; add `docs/v0-acceptance.md`; update README and this plan with actual results and known limitations.
+- Work: run the complete [acceptance scenario](v0-design.md#v0-acceptance-scenario) against fixtures and an authorized local vault; verify clean startup/shutdown and no unintended file writes. Include offline Codex browsing/editing, authenticated live smoke, and deterministic fault tests.
+- Automated verification: persistence/recovery, edit conflict, lifecycle, security boundary, and UI suites from prior phases, plus fresh-session continuity.
+- Human verification: assess teaching continuity, usefulness of generated notes, clarity of save/conflict feedback, and usability of all views.
+- Acceptance: record environment, dependency versions, commands, results, and remaining limits. V0 is complete only when the scenario is repeatable and product behavior is accepted.
 
-- learner-state updates survive process restarts with no dependency on the Tutor remembering an update action.
+## Scope control
 
-## Phase 4 — Durable learning notes
-
-Goal: restore learning notes without reintroducing optional Tutor tool calls.
-
-Required behavior:
-
-1. Reducer may emit a note candidate.
-2. Runtime validates the note candidate.
-3. Note-worthy candidates are persisted under the active topic's `notes/` directory.
-4. Trivial turns do not create noisy notes.
-5. Existing notes are not duplicated unnecessarily.
-
-Initial note-worthiness should favor reusable understanding over transcript summaries.
-
-Exit condition:
-
-- useful notes are generated and stored consistently while low-value turns remain state-only updates.
-
-## Phase 5 — Session checkpoint
-
-Goal: preserve a compact audit trail connecting study turns to learner-state evolution.
-
-Required behavior should follow the existing `learning-vault/sessions/` conventions rather than introducing an unrelated session format.
-
-This checkpoint is separate from the DSH session log:
-
-- DSH session = agent execution history
-- Lattice checkpoint = learning-state evidence/history
-
-Exit condition:
-
-- it is possible to inspect why the learner state changed without storing unnecessary full conversational transcripts in the vault.
-
-## Phase 6 — End-to-end V0 validation
-
-Run the minimum acceptance scenario:
-
-1. Use an existing topic with non-empty learner state.
-2. Start a new Lattice study session.
-3. Verify correct context restoration.
-4. Complete several turns containing:
-   - one clear understanding signal
-   - one uncertainty
-   - one corrected misconception
-   - one note-worthy explanation
-   - one trivial turn that should not create a note
-5. Stop Lattice.
-6. Start a fresh session on the same topic.
-7. Verify continuity from the persisted state.
-8. Confirm no required state or note write depended on an LLM choosing to call a persistence tool.
-
-V0 should not be declared complete until this scenario is repeatable.
-
-## Deferred work
-
-The following work should stay out of V0 even if it appears convenient during implementation:
-
-- automatic Git commit/push
-- GitHub connector
-- automatic topic detection
-- cross-topic relationships
-- review scheduling
-- spaced repetition
-- learner-wide knowledge graph
-- vector retrieval
-- multi-agent orchestration
-- custom DSH agent loop
-- adaptive pedagogy experiments
-- Learning Coach feature migration beyond the minimal Tutor/Reducer lifecycle
-- idea-vault integration
-
-## Design questions to resolve during implementation
-
-These are intentionally left open until the relevant DSH and vault interfaces are inspected in code:
-
-1. Which DSH lifecycle hook is the narrowest reliable place to inject learner context?
-2. Which awaited lifecycle boundary can guarantee persistence before successful turn completion?
-3. Should the Reducer use the same model as the Tutor in V0, or a smaller model with structured output?
-4. What is the minimal backward-compatible mapping from Study Update to the current `learning-vault` state schema?
-5. How should note deduplication work without adding semantic retrieval infrastructure?
-6. What local-path configuration should identify the `learning-vault` checkout?
-7. What exactly constitutes a failed Study Turn when the Tutor response succeeded but persistence failed?
-
-These questions should be answered by the implementation, not hidden behind prompt instructions.
+Do not add cloud hosting, a desktop wrapper, alternate harnesses, API-key billing flows, automatic Git sync, automatic topic routing, vector search, or multi-agent orchestration to unblock these phases. See [non-goals](../INIT.md#non-goals). Resolve protocol/schema uncertainty through Phase 0 evidence and document any proposed scope change before implementing it.
