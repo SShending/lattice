@@ -2,7 +2,11 @@
 
 ## Current position
 
-The repository contains documentation only. The user has agreed to [the V0 direction](../INIT.md); no implementation phase is complete or in progress. This plan replaces the former DSH integration sequence. Keep at most one task in progress and attach acceptance evidence before marking it complete.
+The repository contains the agreed product documentation plus Phase 0
+protocol/vault fixtures and probes; no application implementation phase is
+complete or in progress. The user has agreed to [the V0 direction](../INIT.md);
+this plan replaces the former DSH integration sequence. Keep at most one task in
+progress and attach acceptance evidence before marking it complete.
 
 Source paths below are proposed module locations, to finalize in Phase 0. No files listed as implementation targets have been created. Each phase depends on the preceding phase unless noted. Use synthetic or redacted vault fixtures.
 
@@ -24,13 +28,24 @@ Source paths below are proposed module locations, to finalize in Phase 0. No fil
   exhaustion, and a real approval request remain explicitly unverified because
   this environment has no account and cannot bind the login callback server.
 
-**Task 0.2 — Vault and stack contract. Status: pending.**
+**Task 0.2 — Vault and stack contract. Status: complete (2026-09-18).**
 
 - Dependency: actual vault schema access; do not guess private fields if unavailable.
 - Files: add `docs/vault-contract.md`; update architecture and this plan with selected stack and final paths.
 - Work: inspect state, roadmap, note, and session conventions; define lossless mappings and revisions, metadata placement, transaction recovery, retention, and note identity. Choose a small Web/server stack supporting child processes and local filesystem operations. Record initial supported OS/browser and launcher prerequisites.
 - Verification: round-trip redacted representative records including unknown fields; manually compare each view projection to its source. Review no-op, failed save, and conflicting external edit examples.
 - Acceptance: exact mapping and write/recovery protocol are specified; fixture expectations preserve existing data. Any required migration is explicit and separately approved before execution.
+
+  Evidence: [docs/vault-contract.md](vault-contract.md) records the inspected
+  `/home/tahanan/learn/learning-vault` schema and conventions, the lossless
+  repository and Git-compatible blob revision contract, operational metadata
+  location/retention, Node.js 22 + built-in HTTP/SSE stack, and finalized
+  Phase 1 boundaries. `node tests/vault_contract.test.js` passes 4/4 synthetic
+  round-trip tests, and
+  `node tests/vault_live_probe.js /home/tahanan/learn/learning-vault` reports
+  9 topics, 8 indexed notes, 14 sessions, 8 topics with roadmaps, 6 projection
+  markers with 1 stale marker reported, and an unchanged vault file snapshot.
+  No vault files were modified or migrated.
 
 ## Phase 1 — Local Web shell and readable vault
 

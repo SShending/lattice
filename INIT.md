@@ -42,4 +42,13 @@ Preserve existing vault data and unknown fields. Do not invent a competing learn
 
 ## Decisions still requiring evidence
 
-The architecture and product scope above are settled by the user. Framework, server language, supported Codex version, exact vault field mappings, and transaction metadata placement remain implementation decisions to record in Phase 0. No private vault schema has been verified in this documentation revision. These gaps do not justify changing the agreed architecture.
+The architecture and product scope above are settled by the user. Task 0.1
+verified the installed Codex App Server contract; Task 0.2 inspected the
+private vault schema and selected Node.js 22 with built-in HTTP/SSE primitives,
+lossless schema-preserving mappings, Git-compatible blob revisions, and
+external operational metadata. The exact write implementation, checkpoint
+template for newly-created records, supported browser matrix, and launcher
+prerequisites remain later implementation decisions. See
+[`docs/codex-contract.md`](docs/codex-contract.md) and
+[`docs/vault-contract.md`](docs/vault-contract.md); no migration has been
+authorized or performed.

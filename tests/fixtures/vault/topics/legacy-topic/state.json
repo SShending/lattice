@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "documentType": "topic-state",
+  "vaultId": "synthetic:vault",
+  "id": "legacy-topic",
+  "title": "Synthetic Legacy Topic",
+  "goal": "Verify absent optional roadmap remains absent.",
+  "targetCapability": "Read a topic without inventing a roadmap.",
+  "scope": [],
+  "nonGoals": [],
+  "currentFocus": "No roadmap",
+  "knownGaps": [],
+  "unassessed": [],
+  "nextStep": "Remain empty.",
+  "nextStepReason": "Fixture",
+  "nextStepTargets": [],
+  "concepts": {},
+  "notes": {},
+  "sessions": {},
+  "appliedUpdates": {},
+  "legacyExtension": { "keep": true }
+}

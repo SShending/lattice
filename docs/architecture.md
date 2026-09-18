@@ -64,17 +64,28 @@ Resolve resource paths under the configured vault root, reject traversal and esc
 
 ## Vault compatibility and identity
 
-The existing design expects a topic layout resembling:
+The inspected `SShending/learning-vault` uses this authoritative layout:
 
 ```text
+learning-vault/.learning-vault/vault.json
+learning-vault/.learning-vault/learning-strategy.json
+learning-vault/.learning-vault/coach-state.json
+learning-vault/inbox/state.json
 learning-vault/topics/<topic-id>/
-    state.json
-    README.md
-    notes/
-    sessions/
+    state.json                 # schema v2 topic-state; authoritative
+    README.md                  # derived human projection
+    notes/*.md                 # opaque Markdown, indexed from state.notes
+    sessions/*.md              # opaque checkpoint Markdown, indexed from state.sessions
 ```
 
-This layout is illustrative. Actual state fields, roadmap placement, note frontmatter, session conventions, and extension rules must be inspected against the user's vault before implementation. Do not infer that roadmap requires a new file, or overwrite topic README content to create one. Preserve unknown fields and unrelated files; use explicit backed-up migrations only if later authorized.
+The actual mappings, optional-field behavior, identity rules, Git-compatible
+blob revisions, metadata location, retention, selected stack, and finalized
+Phase 1 source boundaries are recorded in [Vault contract](vault-contract.md).
+There are no topic roadmap files in the inspected vault: roadmap data is an
+optional `state.json` field. Notes and sessions have no uniform frontmatter;
+their Markdown bodies are opaque. Do not infer a roadmap, add frontmatter,
+regenerate README projections, or overwrite unknown fields. Any migration
+would require explicit approval in a later task.
 
 The local vault remains authoritative. Browser caches, Codex history, and any search/index projections are disposable. Operational transaction metadata is separate from learning content but must be stored locally with a documented recovery location. No database, vector store, or GitHub call is required in the study path. Git commits/pushes are user-managed and are not part of successful persistence.
 

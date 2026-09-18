@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "documentType": "topic-state",
+  "vaultId": "synthetic:vault",
+  "id": "complete-topic",
+  "title": "Synthetic Complete Topic",
+  "goal": "Verify lossless repository behavior.",
+  "targetCapability": "Explain how unknown fields survive a round-trip.",
+  "scope": ["fixture"],
+  "nonGoals": [],
+  "roadmap": [{ "id": "first-step", "title": "First step", "status": "active", "futureMilestone": 7 }],
+  "currentFocus": "Round-trip preservation",
+  "knownGaps": [],
+  "unassessed": [],
+  "nextStep": "Run the fixture test.",
+  "nextStepReason": "Contract verification",
+  "nextStepTargets": ["lossless-mapping"],
+  "concepts": {
+    "lossless-mapping": {
+      "id": "lossless-mapping",
+      "name": "Lossless mapping",
+      "status": "learning",
+      "prerequisites": [],
+      "openQuestion": false,
+      "level": 0,
+      "evidence": [],
+      "nextReview": null,
+      "futureConceptField": { "keep": [1, 2, 3] }
+    }
+  },
+  "notes": {
+    "synthetic-note": {
+      "id": "synthetic-note",
+      "path": "topics/complete-topic/notes/synthetic-note.md",
+      "updatedAt": "2026-09-18T00:00:00.000Z",
+      "kind": "learning_note",
+      "claimStatus": "working_model",
+      "sources": [],
+      "futureNoteIndexField": "keep"
+    }
+  },
+  "sessions": {
+    "session-2026-09-18-complete-topic-001": {
+      "id": "session-2026-09-18-complete-topic-001",
+      "path": "topics/complete-topic/sessions/session-2026-09-18-complete-topic-001.md",
+      "createdAt": "2026-09-18T00:00:00.000Z",
+      "futureSessionIndexField": false
+    }
+  },
+  "appliedUpdates": {
+    "fixture-update-001": {
+      "updateId": "fixture-update-001",
+      "baseRevision": "fixture-base-revision",
+      "appliedAt": "2026-09-18T00:00:00.000Z",
+      "futureUpdateField": "keep"
+    }
+  },
+  "futureTopLevelField": { "must": "survive" }
+}
