@@ -8,13 +8,21 @@ Source paths below are proposed module locations, to finalize in Phase 0. No fil
 
 ## Phase 0 — Verify integration contracts
 
-**Task 0.1 — Codex contract. Status: pending.**
+**Task 0.1 — Codex contract. Status: complete (2026-09-18).**
 
 - Outcome: a reproducible, versioned App Server integration specification.
 - Files: update `docs/architecture.md`; add `docs/codex-contract.md` with the tested version, prerequisites, exact protocol operations, permission profile, and reproducible smoke procedure.
 - Work: inspect the installed Codex protocol/schema; verify stdio initialization, account status/ChatGPT login, thread start/resume, streaming, terminal error, interrupt, approval handling, and structured Reducer output. Verify canonical vault writes are denied to model tools. Decide isolated Tutor/Reducer thread handling and model configuration without hardcoding unsupported models.
 - Verification: automated protocol smoke fixtures for success/error/unknown events; a manual account sign-in and interrupted turn. Record observed results and unsupported capabilities. Never record credentials.
 - Acceptance: no uncertain completion/auth/permission behavior is hidden behind prompts; the supported version and adapter contract are documented.
+
+  Evidence: [docs/codex-contract.md](codex-contract.md),
+  `node tests/codex_protocol.test.js` (3 passing), and
+  `node tests/codex_app_server_smoke.js` (initialize, account/read,
+  thread/start, turn/start, and turn/interrupt observed against
+  `codex-cli 0.154.0`). Live authenticated streaming, login completion, quota
+  exhaustion, and a real approval request remain explicitly unverified because
+  this environment has no account and cannot bind the login callback server.
 
 **Task 0.2 — Vault and stack contract. Status: pending.**
 

@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":2,"result":{"account":null,"requiresOpenaiAuth":true}}
+{"jsonrpc":"2.0","id":3,"error":{"code":-32603,"message":"failed to start login server"}}
+{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","error":{"message":"quota exceeded"}}}}
+{"jsonrpc":"2.0","method":"process/exited","params":{"processId":"proc-1","exitCode":1}}

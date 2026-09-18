@@ -47,7 +47,12 @@ Codex manages sign-in and credential refresh. Lattice reads account status and d
 
 [Official authentication guidance](https://learn.chatgpt.com/docs/auth) distinguishes ChatGPT subscription access from API-key usage-based access. V0 targets ChatGPT sign-in, subject to account entitlement and usage limits; it does not promise unlimited access. Detect and explain an API-key configuration rather than silently switching billing modes or falling back to direct API calls. Both Tutor and Reducer consume backend usage. Authentication failure must preserve unsaved/recoverable work.
 
-These upstream facts were checked on 2026-09-17. Exact method payloads and supported capabilities remain version-sensitive; Phase 0 records a tested compatibility contract rather than treating these docs as generated protocol types.
+These upstream facts were checked on 2026-09-17. The installed runtime contract
+was subsequently verified against `codex-cli 0.154.0` on 2026-09-18; see
+[Codex contract](codex-contract.md) for exact commands, payloads, observed
+events, and limitations. Exact method payloads and supported capabilities
+remain version-sensitive; the adapter must generate or validate against the
+pinned executable rather than treating these docs as generated protocol types.
 
 ## Local security and data boundary
 
