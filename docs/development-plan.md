@@ -74,13 +74,24 @@ Source paths below are the selected module locations. Each phase depends on the 
 
 ## Phase 2 — Reliable persistence and user editing
 
-**Task 2.1 — Transactional repository. Status: pending.**
+**Task 2.1 — Transactional repository. Status: complete (2026-09-19).**
 
 - Files: proposed `runtime/vault/`, `tests/persistence/`; update vault contract.
 - Work: implement revision checks, writer lock, durable journal/staging, atomic per-file replacement, commit records, idempotency, and startup recovery. Keep metadata separate from domain content.
 - Automated verification: inject failures before/after each file replacement and commit marker, replay operation IDs, simulate a second writer and external edit, and verify restart outcomes. Check that state+notes+checkpoint never produce false successful completion.
 - Human verification: inspect recovered fixture files and an intentionally conflicted transaction.
 - Acceptance: recovery proves the invariants in architecture before model-driven writes exist.
+
+  Evidence: `runtime/vault/repository.mjs` implements the external metadata
+  lock, revision-aware multi-file journal, staged after-images, original-byte
+  rollback, atomic replacements, durable commit marker, operation/update
+  idempotency, and startup recovery. `node --test tests/persistence.test.mjs`
+  passes 16/16 synthetic persistence tests, including normal state+note+
+  checkpoint behavior, duplicate replay, stale and external conflicts, the
+  one-writer rule, deterministic failures during staging and after each
+  transaction stage, restart recovery, no-op behavior, and no false saved
+  result. The test fixture is copied to a temporary directory for every case;
+  the authorized learning-vault is never used for fault injection.
 
 **Task 2.2 — Notes editor and read-only Understanding. Status: pending.**
 

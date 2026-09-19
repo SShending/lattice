@@ -60,6 +60,18 @@ Bind only to loopback. Validate Host/Origin, reject cross-origin mutation reques
 
 Only the Vault Repository may mutate canonical learning files. Tutor/Reducer execution must use a read-only or isolated workspace without vault write permissions; disabling named persistence tools alone is insufficient when shell/file tools exist. Verify the selected Codex permission profile enforces this. Unsupported approval requests are denied explicitly, never silently approved. If optional tools are enabled, surface supported requests in Study and keep canonical vault writes prohibited.
 
+Task 2.1 implements this boundary in `runtime/vault/repository.mjs`. The
+repository acquires an exclusive `writer.lock`, validates expected blob
+revisions, writes a durable staging journal and after-images under the external
+operational metadata root, and replaces each canonical file through a flushed
+same-filesystem temporary file and rename. A durable `commit.json` is the
+logical commit barrier; operation records are written only after it. Startup
+recovery runs while the writer lock is held and before writable reads. Lattice
+readers wait for an in-process commit to finish, so they never intentionally
+expose a mixed committed snapshot. A fingerprint mismatch returns a retained
+conflict and rolls back only files still bearing this operation's target
+fingerprint; an external edit is never overwritten.
+
 Resolve resource paths under the configured vault root, reject traversal and escaping symlinks, and sanitize rendered Markdown/HTML. Keep account secrets and sensitive protocol payloads out of browser storage, events, and logs. Send only selected learning context to Codex; never claim model execution stays on device.
 
 ## Vault compatibility and identity

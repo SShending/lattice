@@ -139,8 +139,17 @@ The required outcomes are concrete:
   fingerprint mismatch returns `conflict`, preserves the user's file and the
   pending proposal, and requires an explicit reload/reduction or abandonment.
 
-These cases are reviewed here as contract examples; failure injection and
-recovery implementation belong to Phase 2.
+Task 2.1 implements these cases in `runtime/vault/repository.mjs`. Each
+operation is journaled under the external metadata root before canonical files
+are touched. Staged after-images and original bytes are flushed before use;
+each canonical replacement is a same-filesystem temporary-file rename followed
+by a directory flush. `commit.json` is the durable logical barrier, and the
+operation record is marked `saved: true` only after that barrier. Startup
+recovery runs under the one-writer lock and rolls forward verified targets;
+staging or replacement failures remain pending and retryable. If any expected
+or current fingerprint differs, recovery returns a retained conflict and will
+not overwrite the external version. The repository never treats a partial
+multi-file replacement as a completed operation.
 
 ## Future write shape and checkpoints
 
@@ -237,7 +246,9 @@ The Phase 1 shell implements `main.mjs`, `http-api.mjs`, all four
 `runtime/vault/*.mjs` modules, and the `web/` assets. `sse.mjs` remains a
 reserved boundary for a later task because this read-only shell has no live
 turn events. `runtime/vault` is the only module allowed to read canonical vault
-files. `server` never embeds schema mapping, and `web` never receives
+files. `repository.mjs` is the only module allowed to write canonical vault
+files; it accepts complete validated after-images rather than learning policy.
+`server` never embeds schema mapping, and `web` never receives
 filesystem paths or credentials.
 
 ## Verification evidence and limits
@@ -256,8 +267,17 @@ It prints only counts and schema facts, not learner content. Stale/missing
 projection markers do not make the bound state invalid; the state file remains
 authoritative.
 
+The repository transaction tests use only copied synthetic fixtures. They cover
+normal state+note+checkpoint commits, duplicate operation/update replay, stale
+revisions, external edits, the second writer, deterministic failures during
+staging and after every commit stage, restart recovery, no-op checkpoints,
+unknown-field preservation, and the invariant that no operation reports saved
+until every target and the commit record are durable. Checkpoint construction
+and learning-update validation remain Phase 4 responsibilities.
+
 The current repository does not expose an independent machine-readable schema
 for Markdown session bodies, and some historical sessions lack update/base
 revision markers. Lattice must preserve them as opaque Markdown and treat only
 the state indexes and explicitly recognized markers as structured data. Exact
-checkpoint template selection and transactional writes remain Phase 2/4 work.
+checkpoint template selection and learning-update validation remain Phase 4
+work.
