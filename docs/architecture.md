@@ -60,17 +60,18 @@ Bind only to loopback. Validate Host/Origin, reject cross-origin mutation reques
 
 Only the Vault Repository may mutate canonical learning files. Tutor/Reducer execution must use a read-only or isolated workspace without vault write permissions; disabling named persistence tools alone is insufficient when shell/file tools exist. Verify the selected Codex permission profile enforces this. Unsupported approval requests are denied explicitly, never silently approved. If optional tools are enabled, surface supported requests in Study and keep canonical vault writes prohibited.
 
-Task 2.1 implements this boundary in `runtime/vault/repository.mjs`. The
-repository acquires an exclusive `writer.lock`, validates expected blob
+Task 2.1 implements this boundary in `runtime/vault/repository.mjs`. On the
+supported Linux target the repository acquires an exclusive process-lifetime
+`flock` on `writer.lock`, validates expected blob
 revisions, writes a durable staging journal and after-images under the external
 operational metadata root, and replaces each canonical file through a flushed
 same-filesystem temporary file and rename. A durable `commit.json` is the
 logical commit barrier; operation records are written only after it. Startup
 recovery runs while the writer lock is held and before writable reads. Lattice
-readers wait for an in-process commit to finish, so they never intentionally
-expose a mixed committed snapshot. A fingerprint mismatch returns a retained
-conflict and rolls back only files still bearing this operation's target
-fingerprint; an external edit is never overwritten.
+readers wait in the same FIFO lifecycle queue as commits, recovery, and close,
+so they never intentionally expose a mixed committed snapshot. A fingerprint
+mismatch returns a retained conflict and rolls back only files still bearing
+this operation's target fingerprint; an external edit is never overwritten.
 
 Resolve resource paths under the configured vault root, reject traversal and escaping symlinks, and sanitize rendered Markdown/HTML. Keep account secrets and sensitive protocol payloads out of browser storage, events, and logs. Send only selected learning context to Codex; never claim model execution stays on device.
 
@@ -111,7 +112,10 @@ The local vault remains authoritative. Browser caches, Codex history, and any se
 6. Mark the logical transaction committed only after every required target is durable. Lattice readers must wait during commit/recovery so they never present a mixed snapshot as committed.
 7. On startup or write failure, inspect pending transactions before serving writable topic views. Idempotently roll forward verified staged targets. If an external edit conflicts with base/target fingerprints, stop recovery for that topic and preserve all versions for resolution; do not clobber it.
 8. Publish “Saved”/`completed` only after the commit record is durable. A crash after commit but before the event is resolved by reloading the recorded result.
-9. A validated no-op checkpoints evaluation against the existing state revision. Missing or invalid state is not a no-op.
+9. A validated learning no-op requires a state after-image, explicit expected
+revisions, and a new checkpoint/session file; it may leave learning fields
+unchanged but cannot be an empty storage transaction. Missing or invalid state
+is not a no-op.
 10. Note identity and update IDs prevent duplicate creation on retries. A note failure also prevents successful turn completion.
 
 Manual note saves use this same path with `origin=user`, expected revisions, and a compact change record. Understanding has no manual save path: learner-state corrections are attributable to a Study/Reducer update, with user corrections distinguishable from assessed evidence. Rejected edits leave canonical files intact and retain the browser draft. On conflict show the latest content and the draft; require explicit reconciliation or reload rather than last-write-wins.

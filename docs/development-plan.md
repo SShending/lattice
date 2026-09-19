@@ -86,8 +86,10 @@ Source paths below are the selected module locations. Each phase depends on the 
   lock, revision-aware multi-file journal, staged after-images, original-byte
   rollback, atomic replacements, durable commit marker, operation/update
   idempotency, and startup recovery. `node --test tests/persistence.test.mjs`
-  passes 16/16 synthetic persistence tests, including normal state+note+
-  checkpoint behavior, duplicate replay, stale and external conflicts, the
+  passes 15/15 synthetic persistence tests and `node --test
+  tests/task_2_1_acceptance.test.mjs` passes 14/14 focused acceptance
+  regressions, including normal state+note+checkpoint behavior, duplicate
+  replay, stale and external conflicts, the
   one-writer rule, deterministic failures during staging and after each
   transaction stage, restart recovery, no-op behavior, and no false saved
   result. The test fixture is copied to a temporary directory for every case;

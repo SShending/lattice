@@ -49,6 +49,7 @@ test('normal state + note + checkpoint transaction is durable and idempotent', a
     proposal.state.sessions[sessionId] = { id: sessionId, path: `topics/complete-topic/sessions/${sessionId}.md`, createdAt: '2026-09-19T00:00:00.000Z' };
     proposal.files[0].content = `${JSON.stringify(proposal.state, null, 2)}\n`;
     proposal.files.push({ relativePath: proposal.state.sessions[sessionId].path, content: '# Normal checkpoint\n\nUpdate ID: `update-normal`\n' });
+    proposal.expectedRevisions[proposal.state.sessions[sessionId].path] = null;
     const result = await repository.commit({ topicId: 'complete-topic', operationId: 'op-normal', updateId: 'update-normal', origin: 'reducer', files: proposal.files, expectedRevisions: proposal.expectedRevisions, metadata: { checkpoint: sessionId } });
     assert.equal(result.status, 'committed');
     assert.equal(result.saved, true);
@@ -65,7 +66,7 @@ test('normal state + note + checkpoint transaction is durable and idempotent', a
 test('stale revision and external modification are conflicts without false save', async () => {
   await withRepository(async ({ repository, root }) => {
     const proposal = await stateAndNote(repository, null, 'stale');
-    const stale = await repository.commit({ topicId: 'complete-topic', operationId: 'op-stale', updateId: 'update-stale', origin: 'user', files: proposal.files, expectedRevisions: { ...proposal.expectedRevisions, [proposal.snapshot.statePath]: 'stale-revision' } });
+    const stale = await repository.commit({ topicId: 'complete-topic', operationId: 'op-stale', updateId: 'update-stale', origin: 'user', files: proposal.files, expectedRevisions: { ...proposal.expectedRevisions, [proposal.snapshot.statePath]: '0'.repeat(40) } });
     assert.equal(stale.status, 'conflict');
     assert.equal(stale.saved, false);
 
@@ -112,6 +113,11 @@ for (const stage of recoveryStages) {
     try {
       await failing.initialize();
       const proposal = await stateAndNote(failing, null, `recovery-${stage}`);
+      const sessionId = `session-recovery-${stage.replaceAll(':', '-')}`;
+      proposal.state.sessions[sessionId] = { id: sessionId, path: `topics/complete-topic/sessions/${sessionId}.md`, createdAt: '2026-09-19T00:00:00.000Z' };
+      proposal.files[0].content = `${JSON.stringify(proposal.state, null, 2)}\n`;
+      proposal.files.push({ relativePath: proposal.state.sessions[sessionId].path, content: `# recovery-${stage}\n` });
+      proposal.expectedRevisions[proposal.state.sessions[sessionId].path] = null;
       await assert.rejects(() => failing.commit({ topicId: 'complete-topic', operationId: `op-${stage.replaceAll(':', '-')}`, updateId: `update-${stage.replaceAll(':', '-')}`, origin: 'reducer', files: proposal.files, expectedRevisions: proposal.expectedRevisions }), (error) => error instanceof TransactionError || error.code === 'injected-failure');
       failing._proposal = proposal;
     } finally { await failing.close().catch(() => {}); }
@@ -131,12 +137,14 @@ for (const stage of ['before-stage-write', 'after-stage-write', 'before-manifest
     try {
       await failing.initialize();
       const proposal = await stateAndNote(failing, null, `staging-${stage}`);
-      await assert.rejects(() => failing.commit({ topicId: 'complete-topic', operationId: `op-${stage}`, updateId: `update-${stage}`, origin: 'reducer', files: proposal.files, expectedRevisions: proposal.expectedRevisions }), (error) => error.code === 'injected-failure');
+      await assert.rejects(() => failing.commit({ topicId: 'complete-topic', operationId: `op-${stage}`, updateId: `update-${stage}`, origin: 'user', files: proposal.files, expectedRevisions: proposal.expectedRevisions }), (error) => error.code === 'injected-failure');
     } finally { await failing.close().catch(() => {}); }
     const recovered = new VaultRepository(fixture.root, { stateRoot: fixture.stateRoot });
     try {
       await recovered.initialize();
       assert.equal((await recovered.snapshot('complete-topic')).state.futureTopLevelField.testMarker, undefined);
+      const outcomes = await recovered.recover();
+      assert.equal(outcomes[0].status, 'abandoned');
     } finally { await recovered.close().catch(() => {}); await removeTree(fixture.root); await removeTree(fixture.stateRoot); }
   });
 }
@@ -150,7 +158,7 @@ test('validated no-op checkpoint has a durable operation outcome', async () => {
     const result = await repository.commit({ topicId: 'complete-topic', operationId: 'op-noop', updateId: 'update-noop', origin: 'reducer', noOp: true, files: [
       { relativePath: snapshot.statePath, content: JSON.stringify(state, null, 2) + '\n' },
       { relativePath: state.sessions[sessionId].path, content: '# No-op checkpoint\n' },
-    ], expectedRevisions: { [snapshot.statePath]: snapshot.stateRevision } });
+    ], expectedRevisions: { [snapshot.statePath]: snapshot.stateRevision, [state.sessions[sessionId].path]: null } });
     assert.equal(result.status, 'committed');
     assert.equal(result.noOp, true);
   });

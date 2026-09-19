@@ -1,13 +1,15 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { assertIndexedPath, assertTopicId, resolveVaultPath } from './paths.mjs';
 import { VaultReader } from './reader.mjs';
 import { blobRevision } from './revisions.mjs';
 
 const OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const FAILURE = Symbol('failure injection');
+const REVISION = /^[0-9a-f]{40}$/;
 
 export class RepositoryError extends Error {
   constructor(code, message, details = {}) {
@@ -53,7 +55,23 @@ function assertOperationId(id, name) {
   return id;
 }
 
-async function mkdirp(directory) { await fs.mkdir(directory, { recursive: true }); }
+async function mkdirp(directory) {
+  const missing = [];
+  let cursor = path.resolve(directory);
+  while (true) {
+    try { await fs.stat(cursor); break; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    missing.push(cursor);
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  for (const target of missing.reverse()) {
+    await fs.mkdir(target);
+    await syncDirectory(target);
+    await syncDirectory(path.dirname(target));
+  }
+}
 
 async function syncDirectory(directory) {
   let handle;
@@ -95,7 +113,7 @@ function failureName(stage, index) { return index === undefined ? stage : `${sta
 export class VaultRepository {
   constructor(vaultRoot, options = {}) {
     if (!vaultRoot) throw new RepositoryError('invalid', 'vaultRoot is required');
-    this.root = path.resolve(vaultRoot);
+    this.root = fsSync.realpathSync.native(path.resolve(vaultRoot));
     this.reader = options.reader || new VaultReader(this.root);
     this.stateRoot = options.stateRoot || homeStateRoot();
     this.metadataRoot = options.metadataRoot || operationalRoot(this.root, this.stateRoot);
@@ -104,10 +122,12 @@ export class VaultRepository {
     this.diagnosticsRoot = path.join(this.metadataRoot, 'diagnostics');
     this.lockPath = path.join(this.metadataRoot, 'writer.lock');
     this.failureInjector = options.failureInjector || null;
-    this.lockHandle = null;
+    this.lockProcess = null;
     this.lockToken = null;
     this.ready = false;
-    this.committing = null;
+    this.queue = Promise.resolve();
+    this.recoveryRequired = false;
+    this.closing = false;
   }
 
   async initialize() {
@@ -116,7 +136,7 @@ export class VaultRepository {
     await mkdirp(this.operationsRoot);
     await mkdirp(this.diagnosticsRoot);
     await this.acquireWriterLock();
-    try { await this.recover(); }
+    try { await this.#recover(); }
     catch (error) {
       await this.releaseWriterLock();
       throw error;
@@ -126,33 +146,57 @@ export class VaultRepository {
   }
 
   async close() {
-    await this.releaseWriterLock();
-    this.ready = false;
+    if (this.closing) return this.queue;
+    this.closing = true;
+    return this.#enqueue(async () => {
+      await this.releaseWriterLock();
+      this.ready = false;
+    }, { allowClosing: true });
   }
 
   async acquireWriterLock() {
-    if (this.lockHandle) return;
+    if (this.lockProcess) return;
     await mkdirp(this.metadataRoot);
-    try {
-      this.lockHandle = await fs.open(this.lockPath, 'wx', 0o600);
-      this.lockToken = crypto.randomUUID();
-      await this.lockHandle.writeFile(JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: now(), token: this.lockToken }));
-      await this.lockHandle.sync();
-    } catch (error) {
-      await this.lockHandle?.close().catch(() => {});
-      this.lockHandle = null;
-      if (error.code === 'EEXIST') throw new WriterLockError('another Lattice writer owns this vault', { lockPath: this.lockPath });
-      throw error;
-    }
+    const child = spawn('flock', ['--exclusive', '--nonblock', this.lockPath, '/bin/sh', '-c', "printf 'locked\\n'; cat >/dev/null"], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new RepositoryError('lock-failed', 'writer lock helper did not become ready')), 5_000);
+      const poll = () => {
+        if (stdout.includes('locked\n')) { clearTimeout(timeout); resolve(); }
+        else if (child.exitCode !== null) { clearTimeout(timeout); reject(new WriterLockError('another Lattice writer owns this vault', { lockPath: this.lockPath })); }
+        else setTimeout(poll, 5);
+      };
+      child.once('error', (error) => { clearTimeout(timeout); reject(new RepositoryError('lock-failed', `unable to start flock: ${error.message}`)); });
+      poll();
+    }).catch(async (error) => {
+      child.stdin.destroy();
+      child.kill('SIGTERM');
+      if (error instanceof WriterLockError) throw error;
+      if (child.exitCode === 1) throw new WriterLockError('another Lattice writer owns this vault', { lockPath: this.lockPath });
+      throw new RepositoryError(error.code || 'lock-failed', error.message, { stderr: stderr.trim() });
+    });
+    this.lockProcess = child;
+    this.lockToken = crypto.randomUUID();
+    await writeDurable(`${this.lockPath}.owner.json`, jsonBytes({ pid: process.pid, hostname: os.hostname(), acquiredAt: now(), token: this.lockToken, vaultRoot: this.root }));
   }
 
   async releaseWriterLock() {
-    if (!this.lockHandle) return;
-    const handle = this.lockHandle;
-    this.lockHandle = null;
-    await handle.close().catch(() => {});
-    const lock = await readJsonFile(this.lockPath).catch(() => null);
-    if (!lock || lock.token === this.lockToken) await fs.unlink(this.lockPath).catch(() => {});
+    if (!this.lockProcess) return;
+    const child = this.lockProcess;
+    this.lockProcess = null;
+    child.stdin.end();
+    await new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      child.once('exit', resolve);
+      setTimeout(() => child.kill('SIGTERM'), 1_000);
+    });
+    const owner = await readJsonFile(`${this.lockPath}.owner.json`).catch(() => null);
+    if (owner?.token === this.lockToken) await fs.unlink(`${this.lockPath}.owner.json`).catch(() => {});
     this.lockToken = null;
     await syncDirectory(this.metadataRoot).catch(() => {});
   }
@@ -161,10 +205,19 @@ export class VaultRepository {
     if (!this.ready) await this.initialize();
   }
 
+  #enqueue(work, { allowClosing = false } = {}) {
+    if (this.closing && !allowClosing) return Promise.reject(new RepositoryError('closed', 'repository is closing'));
+    const run = this.queue.catch(() => {}).then(work);
+    this.queue = run;
+    return run;
+  }
+
   async snapshot(topicId) {
     await this.ensureReady();
-    if (this.committing) await this.committing.catch(() => {});
-    return this.#snapshot(topicId);
+    return this.#enqueue(async () => {
+      if (this.recoveryRequired) await this.#recoverOrThrow();
+      return this.#snapshot(topicId);
+    });
   }
 
   async #snapshot(topicId) {
@@ -182,11 +235,16 @@ export class VaultRepository {
 
   async commit(input) {
     await this.ensureReady();
-    if (this.committing) await this.committing.catch(() => {});
-    const run = this.#commit(input);
-    this.committing = run;
-    try { return await run; }
-    finally { if (this.committing === run) this.committing = null; }
+    return this.#enqueue(async () => {
+      if (this.recoveryRequired) await this.#recoverOrThrow();
+      try { return await this.#commit(input); }
+      catch (error) {
+        if (error instanceof RepositoryError && ['invalid', 'schema', 'metadata-corrupt', 'writer-locked', 'closed'].includes(error.code)) throw error;
+        this.recoveryRequired = true;
+        try { await this.#recoverOrThrow(); } catch {}
+        throw error;
+      }
+    });
   }
 
   async #commit(input) {
@@ -224,6 +282,18 @@ export class VaultRepository {
   }
 
   async recover() {
+    await this.ensureReady();
+    return this.#enqueue(() => this.#recover());
+  }
+
+  async #recoverOrThrow() {
+    const outcomes = await this.#recover();
+    const unresolved = outcomes.find((outcome) => outcome.status === 'pending' || outcome.status === 'conflict');
+    if (unresolved) throw new RepositoryError('recovery-required', 'vault has an unresolved transaction', { outcomes });
+    this.recoveryRequired = false;
+  }
+
+  async #recover() {
     await mkdirp(this.transactionsRoot);
     const entries = await fs.readdir(this.transactionsRoot, { withFileTypes: true });
     const outcomes = [];
@@ -231,7 +301,8 @@ export class VaultRepository {
       if (!entry.isDirectory() || !OPERATION_ID.test(entry.name)) continue;
       const transactionPath = path.join(this.transactionsRoot, entry.name);
       const manifest = await readJsonFile(path.join(transactionPath, 'manifest.json'));
-      if (!manifest || ['committed', 'conflict'].includes(manifest.status)) continue;
+      if (!manifest) continue;
+      if (manifest.status === 'conflict') { outcomes.push({ status: 'conflict', operationId: manifest.operationId }); continue; }
       try {
         outcomes.push(await this.#recoverTransaction(transactionPath, manifest));
       } catch (error) {
@@ -239,18 +310,29 @@ export class VaultRepository {
         else throw error;
       }
     }
+    this.recoveryRequired = outcomes.some((outcome) => outcome.status === 'pending' || outcome.status === 'conflict');
     return outcomes;
   }
 
   async #recoverTransaction(transactionPath, manifest) {
     const operationPath = path.join(this.operationsRoot, `${manifest.operationId}.json`);
-    if (manifest.status === 'staging') return { status: 'pending', saved: false, operationId: manifest.operationId, recoverable: true, replayed: true };
+    if (manifest.status === 'abandoned') return { status: 'abandoned', saved: false, operationId: manifest.operationId, replayed: true };
+    if (manifest.status === 'staging') {
+      const abandonedAt = now();
+      const abandoned = { ...manifest, status: 'abandoned', abandonedAt, reason: 'staging did not produce a complete transaction manifest' };
+      await writeDurable(path.join(transactionPath, 'manifest.json'), jsonBytes(abandoned));
+      const operation = await readJsonFile(operationPath) || manifest.operation || {};
+      await writeDurable(operationPath, jsonBytes({ ...operation, status: 'abandoned', saved: false, result: { status: 'abandoned', saved: false, operationId: manifest.operationId, updateId: manifest.updateId, topicId: manifest.topicId, abandonedAt, recoverable: false } }));
+      return { status: 'abandoned', saved: false, operationId: manifest.operationId, replayed: true };
+    }
     const commitPath = path.join(transactionPath, 'commit.json');
-    if (await readOptional(commitPath)) {
-      const committed = { ...manifest, status: 'committed', committedAt: manifest.committedAt || now() };
+    const commit = await readJsonFile(commitPath);
+    if (commit) {
+      const result = this.#committedResult(manifest, commit);
+      const committed = { ...manifest, status: 'committed', committedAt: result.committedAt };
       await writeDurable(path.join(transactionPath, 'manifest.json'), jsonBytes(committed));
-      await writeDurable(operationPath, jsonBytes({ ...manifest.operation, status: 'committed', saved: true, committedAt: committed.committedAt }));
-      return { status: 'committed', operationId: manifest.operationId, replayed: true };
+      await writeDurable(operationPath, jsonBytes({ ...manifest.operation, status: 'committed', saved: true, committedAt: result.committedAt, result }));
+      return { ...result, replayed: true };
     }
     const operation = await readJsonFile(operationPath) || manifest.operation;
     if (!operation) throw new RepositoryError('metadata-corrupt', `missing operation record: ${manifest.operationId}`);
@@ -281,6 +363,12 @@ export class VaultRepository {
       }
       if (manifest) return this.#apply({ transactionPath, manifest, operation: existing, request: this.#requestFromManifest(manifest) });
     }
+    if (existing.status === 'committed' && !existing.result) {
+      const transactionPath = path.join(this.transactionsRoot, request.operationId);
+      const manifest = await readJsonFile(path.join(transactionPath, 'manifest.json'));
+      if (!manifest) throw new RepositoryError('metadata-corrupt', `missing transaction manifest: ${request.operationId}`);
+      return this.#recoverTransaction(transactionPath, manifest);
+    }
     return { ...existing.result, replayed: true };
   }
 
@@ -293,14 +381,15 @@ export class VaultRepository {
     const transactionPath = path.join(this.transactionsRoot, request.operationId);
     for (const [index, entry] of request.files.entries()) {
       const absolute = this.#secureTarget(request.topicId, entry.relativePath);
+      await this.#assertTargetSafe(request.topicId, entry.relativePath);
       const before = await readOptional(absolute);
-      const expected = request.expectedRevisions[entry.relativePath] ?? null;
+      const expected = request.expectedRevisions[entry.relativePath];
       entries.push({
         index,
         relativePath: entry.relativePath,
         stagePath: `staged/${String(index).padStart(3, '0')}.bin`,
         originalPath: `original/${String(index).padStart(3, '0')}.bin`,
-        baseRevision: expected ?? relativeFingerprint(before),
+        baseRevision: expected,
         observedRevision: relativeFingerprint(before),
         targetRevision: entry.targetRevision,
         targetExists: true,
@@ -351,6 +440,7 @@ export class VaultRepository {
       await this.#inject('after-applying-marker', request, manifest);
       for (const file of manifest.files) {
         const target = this.#secureTarget(manifest.topicId, file.relativePath);
+        await this.#assertTargetSafe(manifest.topicId, file.relativePath);
         const current = await readOptional(target);
         const currentRevision = relativeFingerprint(current);
         if (currentRevision === file.targetRevision) {
@@ -363,6 +453,7 @@ export class VaultRepository {
         const checkedRevision = relativeFingerprint(checked);
         if (checkedRevision !== file.baseRevision) throw new TransactionConflictError(`external modification detected: ${file.relativePath}`, { relativePath: file.relativePath, expected: file.baseRevision, actual: checkedRevision, operationId: manifest.operationId });
         const stage = await fs.readFile(path.join(transactionPath, file.stagePath));
+        if (blobRevision(stage) !== file.targetRevision) throw new RepositoryError('metadata-corrupt', `staged content fingerprint mismatch: ${file.relativePath}`);
         await this.#atomicReplace(target, stage, manifest.operationId, file.index);
         file.applied = true;
         await writeDurable(path.join(transactionPath, 'manifest.json'), jsonBytes(manifest));
@@ -375,11 +466,11 @@ export class VaultRepository {
       }
       await this.#inject('before-commit-marker', request, manifest);
       const committedAt = now();
-      await writeDurable(path.join(transactionPath, 'commit.json'), jsonBytes({ operationId: manifest.operationId, updateId: manifest.updateId, committedAt, targetRevisions: Object.fromEntries(manifest.files.map((file) => [file.relativePath, file.targetRevision])) }));
+      const result = this.#committedResult(manifest, { committedAt, targetRevisions: Object.fromEntries(manifest.files.map((file) => [file.relativePath, file.targetRevision])) });
+      await writeDurable(path.join(transactionPath, 'commit.json'), jsonBytes(result));
       await this.#inject('after-commit-marker', request, manifest);
       manifest = { ...manifest, status: 'committed', committedAt };
       await writeDurable(path.join(transactionPath, 'manifest.json'), jsonBytes(manifest));
-      const result = { status: 'committed', saved: true, operationId: manifest.operationId, updateId: manifest.updateId, topicId: manifest.topicId, committedAt, targetRevisions: Object.fromEntries(manifest.files.map((file) => [file.relativePath, file.targetRevision])), noOp: manifest.noOp };
       await this.#inject('before-operation-record', request, result);
       await writeDurable(operationPath, jsonBytes({ ...transaction.operation, status: 'committed', saved: true, committedAt, result }));
       await this.#inject('after-operation-record', request, result);
@@ -395,7 +486,7 @@ export class VaultRepository {
       }
       const failure = { status: 'pending', saved: false, operationId: manifest.operationId, updateId: manifest.updateId, topicId: manifest.topicId, error: error.message, recoverable: true };
       await writeDurable(operationPath, jsonBytes({ ...transaction.operation, status: 'pending', saved: false, lastError: failure }));
-      if (error === FAILURE || error?.code === 'injected-failure') throw new TransactionError(error.message || 'deterministic failure injection', failure);
+      if (error?.code === 'injected-failure') throw new TransactionError(error.message || 'deterministic failure injection', failure);
       throw error;
     }
   }
@@ -405,7 +496,8 @@ export class VaultRepository {
     for (const file of manifest.files) {
       const current = await readOptional(this.#secureTarget(manifest.topicId, file.relativePath));
       const actual = relativeFingerprint(current);
-      if (actual !== file.baseRevision && actual !== file.targetRevision) mismatches.push({ relativePath: file.relativePath, expected: file.baseRevision, actual });
+      const recoveryTarget = manifest.status === 'applying' && actual === file.targetRevision;
+      if (actual !== file.baseRevision && !recoveryTarget) mismatches.push({ relativePath: file.relativePath, expected: file.baseRevision, actual });
     }
     if (mismatches.length) throw new TransactionConflictError('expected revision does not match current content', { operationId: manifest.operationId, mismatches });
     if (request.expectedRevisions) {
@@ -450,6 +542,21 @@ export class VaultRepository {
     return resolveVaultPath(this.root, relativePath);
   }
 
+  async #assertTargetSafe(topicId, relativePath) {
+    const target = this.#secureTarget(topicId, relativePath);
+    const topicRoot = resolveVaultPath(this.root, `topics/${topicId}`);
+    let cursor = this.root;
+    for (const segment of path.relative(this.root, target).split(path.sep)) {
+      cursor = path.join(cursor, segment);
+      let stat;
+      try { stat = await fs.lstat(cursor); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      if (stat.isSymbolicLink()) throw new RepositoryError('invalid', `transaction path contains a symbolic link: ${relativePath}`);
+    }
+    const topicReal = await fs.realpath(topicRoot);
+    if (topicReal !== topicRoot) throw new RepositoryError('invalid', `topic path is not canonical: ${topicId}`);
+  }
+
   #validateRequest(input) {
     if (!input || typeof input !== 'object') throw new RepositoryError('invalid', 'transaction request is required');
     const topicId = assertTopicId(input.topicId);
@@ -457,16 +564,24 @@ export class VaultRepository {
     const updateId = assertOperationId(input.updateId, 'updateId');
     const origin = input.origin === 'user' || input.origin === 'reducer' ? input.origin : null;
     if (!origin) throw new RepositoryError('invalid', 'origin must be user or reducer');
-    if (!Array.isArray(input.files) || input.files.length === 0 && !input.noOp) throw new RepositoryError('invalid', 'transaction files are required');
-    const expectedRevisions = input.expectedRevisions && typeof input.expectedRevisions === 'object' ? { ...input.expectedRevisions } : {};
+    if (!Array.isArray(input.files) || input.files.length === 0) throw new RepositoryError('invalid', 'transaction files are required');
+    if (!input.expectedRevisions || typeof input.expectedRevisions !== 'object' || Array.isArray(input.expectedRevisions)) throw new RepositoryError('invalid', 'expectedRevisions is required');
+    const expectedRevisions = { ...input.expectedRevisions };
     const seen = new Set();
     const files = (input.files || []).map((entry) => {
       if (!entry || typeof entry.relativePath !== 'string' || seen.has(entry.relativePath)) throw new RepositoryError('invalid', 'transaction files must have unique relative paths');
       seen.add(entry.relativePath);
       if (entry.content === undefined || entry.content === null) throw new RepositoryError('invalid', `missing content for ${entry.relativePath}`);
       this.#secureTarget(topicId, entry.relativePath);
+      if (!Object.hasOwn(expectedRevisions, entry.relativePath)) throw new RepositoryError('invalid', `missing expected revision for ${entry.relativePath}`);
+      const expected = expectedRevisions[entry.relativePath];
+      if (expected !== null && (typeof expected !== 'string' || !REVISION.test(expected))) throw new RepositoryError('invalid', `invalid expected revision for ${entry.relativePath}`);
       return fileEntry(entry.relativePath, entry.content);
     });
+    for (const [relativePath, expected] of Object.entries(expectedRevisions)) {
+      this.#secureTarget(topicId, relativePath);
+      if (expected !== null && (typeof expected !== 'string' || !REVISION.test(expected))) throw new RepositoryError('invalid', `invalid expected revision for ${relativePath}`);
+    }
     return { topicId, operationId, updateId, origin, files, expectedRevisions, noOp: Boolean(input.noOp), metadata: input.metadata && typeof input.metadata === 'object' ? structuredClone(input.metadata) : {} };
   }
 
@@ -491,6 +606,39 @@ export class VaultRepository {
       const indexed = Object.values(state[kind] || {}).find((candidate) => candidate?.path === entry.relativePath);
       if (!indexed) throw new RepositoryError('invalid', `${kind} after-image is not indexed by state after-image`);
     }
+    for (const kind of ['notes', 'sessions']) {
+      const before = snapshot.state[kind] || {};
+      const after = state[kind] || {};
+      for (const [id, index] of Object.entries(after)) {
+        if (!index || index.id !== id || typeof index.path !== 'string') throw new RepositoryError('invalid', `invalid ${kind} index entry: ${id}`);
+        const changed = !Object.hasOwn(before, id) || before[id]?.path !== index.path;
+        if (changed && !request.files.some((entry) => entry.relativePath === index.path)) throw new RepositoryError('invalid', `required ${kind} file is missing: ${index.path}`);
+      }
+    }
+    if (request.origin === 'reducer') {
+      const addedSessions = Object.entries(state.sessions || {}).filter(([id]) => !Object.hasOwn(snapshot.state.sessions || {}, id));
+      if (addedSessions.length === 0) throw new RepositoryError('invalid', 'reducer transaction requires a new checkpoint');
+      if (request.noOp) {
+        const beforeLearning = structuredClone(snapshot.state);
+        const afterLearning = structuredClone(state);
+        delete beforeLearning.sessions;
+        delete afterLearning.sessions;
+        if (JSON.stringify(beforeLearning) !== JSON.stringify(afterLearning)) throw new RepositoryError('invalid', 'no-op may only add checkpoint state');
+      }
+    }
+  }
+
+  #committedResult(manifest, commit) {
+    return {
+      status: 'committed',
+      saved: true,
+      operationId: manifest.operationId,
+      updateId: manifest.updateId,
+      topicId: manifest.topicId,
+      committedAt: commit.committedAt,
+      targetRevisions: commit.targetRevisions || Object.fromEntries(manifest.files.map((file) => [file.relativePath, file.targetRevision])),
+      noOp: Boolean(manifest.noOp),
+    };
   }
 
   async #findUpdate(updateId) {

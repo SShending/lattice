@@ -146,7 +146,9 @@ each canonical replacement is a same-filesystem temporary-file rename followed
 by a directory flush. `commit.json` is the durable logical barrier, and the
 operation record is marked `saved: true` only after that barrier. Startup
 recovery runs under the one-writer lock and rolls forward verified targets;
-staging or replacement failures remain pending and retryable. If any expected
+staging or replacement failures remain pending and retryable. A journal that
+never reached a complete manifest is marked abandoned with `saved: false`,
+because canonical files were not touched. If any expected
 or current fingerprint differs, recovery returns a retained conflict and will
 not overwrite the external version. The repository never treats a partial
 multi-file replacement as a completed operation.
@@ -172,8 +174,10 @@ Existing Markdown files are never silently rewritten to add metadata. New
 Lattice checkpoints use a compact Markdown session document and a new
 `state.sessions` entry; the exact template is a Phase 4 implementation detail
 and must follow the observed privacy-minimized conventions. A checkpoint is
-required even for a validated no-op, but no mastery or state mutation is
-manufactured to make it non-empty.
+required even for a validated no-op; the repository requires a state
+after-image, explicit expected revisions, and the checkpoint file in the same
+transaction, while no mastery or state mutation is manufactured to make it
+non-empty.
 
 ## Operational metadata and retention
 
