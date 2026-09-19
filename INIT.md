@@ -16,8 +16,8 @@ This supersedes DSH as the V0 harness, Lattice as a harness plugin, and a CLI as
 
 - Select an existing topic and resume from authoritative learner state.
 - Study while seeing the distinction between an answer arriving and learning changes being saved.
-- Inspect Topics, Roadmap, Notes, and State without digging through files.
-- Edit notes and correct state; see saved edits reflected in the next turn.
+- Inspect the active topic's Roadmap, Understanding, and Notes without digging through files.
+- Edit notes and correct learner state through a Study interaction; see committed changes reflected in the next turn.
 - Restart after successful saves or interrupted writes without losing accepted learning changes or duplicating notes.
 
 The [V0 acceptance scenario](docs/v0-design.md#v0-acceptance-scenario) is the success standard. Reliability and inspectability take priority over the number of learning features.
@@ -26,7 +26,7 @@ The [V0 acceptance scenario](docs/v0-design.md#v0-acceptance-scenario) is the su
 
 V0 serves one local user and one configured vault, with one active topic per study session and one in-flight study turn across the runtime. Users select topics explicitly. Browsing other topics does not retarget a running turn.
 
-The five primary views are Study, Topics, Roadmap, Notes, and State. Notes and State are editable. Roadmap is a read-only projection of existing roadmap records and current focus; a roadmap authoring system is deferred. Session checkpoints are available as lightweight history within Study.
+The four primary views are Study, Roadmap, Understanding, and Notes. The active topic is global workspace context selected in the top bar, not a standalone view. Notes remain directly editable in the later editing phase; Understanding is a read-only projection of how Lattice currently understands the learner. Learner-state corrections happen through a Study interaction and validated Reducer update, not by directly editing `state.json`. Roadmap is a read-only projection of existing roadmap records and current focus; a roadmap authoring system is deferred. Session checkpoints are available as lightweight history within Study.
 
 Preserve existing vault data and unknown fields. Do not invent a competing learning store or silently migrate the vault. Keep credentials out of the browser and vault. Local storage does not imply offline model execution.
 

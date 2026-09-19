@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f1ea">
+  <title>Lattice learning workspace</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-identity">
+      <a class="brand" href="#study" aria-label="Lattice study workspace">Lattice</a>
+      <span class="topbar-slash" aria-hidden="true">/</span>
+      <label class="topbar-topic" for="topic-select"><span class="sr-only">Active topic</span><select id="topic-select" aria-label="Active topic"></select></label>
+    </div>
+    <div class="topbar-status"><span id="connection" class="status"><span class="status-dot"></span>Loading vault</span><span class="readonly-badge">Read only</span></div>
+  </header>
+  <div class="app-frame">
+    <aside class="rail" aria-label="Learning space navigation">
+      <div class="nav-shell"><nav id="nav" class="nav" aria-label="Primary">
+        <a href="#study" data-view="study" class="nav-item nav-primary"><span><strong>Study</strong><small>What I am doing now</small></span></a>
+        <a href="#roadmap" data-view="roadmap" class="nav-item"><span><strong>Roadmap</strong><small>Where I am going</small></span></a>
+        <a href="#understanding" data-view="understanding" class="nav-item"><span><strong>Understanding</strong><small>Where Lattice thinks I stand</small></span></a>
+        <a href="#notes" data-view="notes" class="nav-item"><span><strong>Notes</strong><small>What I have kept</small></span></a>
+      </nav></div>
+    </aside>
+    <main id="app" class="content" aria-live="polite"></main>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

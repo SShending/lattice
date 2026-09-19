@@ -29,8 +29,8 @@ rewrite the vault during Phase 1.
   derived and may lag. README formats differ, so Lattice reads them as Markdown
   projections and does not parse them as a schema.
 - Notes are Markdown without YAML frontmatter. State `notes` entries provide
-  the machine identity and metadata (`id`, `path`, `updatedAt`, `kind`,
-  `claimStatus`, `sources`). Existing note bodies contain headings and prose;
+  the machine identity and metadata (`id`, `path`, optional `title`, `updatedAt`,
+  `kind`, `claimStatus`, `sources`). Existing note bodies contain headings and prose;
   Lattice must preserve the entire body byte-for-byte when not editing it.
 - Sessions are Markdown checkpoint records. State `sessions` entries provide
   `id`, `path`, and `createdAt`. Existing records are intentionally
@@ -76,8 +76,8 @@ The initial read-only views map as follows:
 
 | Lattice view | Source of truth | Rules |
 | --- | --- | --- |
-| Topics | manifest topic binding + state `id/title/goal/currentFocus` | Enumerate manifest bindings; do not discover arbitrary directories as topics. |
-| State | bound `topics/<id>/state.json` | Render supported fields and preserve every unknown field. |
+| Global topic selector | manifest topic binding + state `id/title/goal/currentFocus` | Enumerate manifest bindings; do not discover arbitrary directories as topics. Topic selection is workspace context, not a primary page. |
+| Understanding | bound `topics/<id>/state.json` | Render supported fields as a read-only learner-model projection and preserve every unknown field. Corrections come through Study/Reducer updates, not direct browser edits. |
 | Roadmap | state `roadmap` when present | Missing roadmap is an honest empty state; never infer one from prose or concepts. |
 | Notes | state `notes` index plus referenced Markdown | Validate paths remain under the topic; note body is authoritative Markdown. |
 | Study/session history | state `sessions` index plus referenced Markdown | Render compact checkpoint metadata/body; do not treat a Codex transcript as a vault session. |
@@ -135,7 +135,7 @@ The required outcomes are concrete:
 - A write failure before the logical commit marker leaves canonical files
   untouched and leaves a recoverable staged transaction under the external
   metadata directory; it is never reported as saved.
-- If a user edits `state.json` or a note between snapshot and commit, the
+- If an external editor changes `state.json` or a note between snapshot and commit, the
   fingerprint mismatch returns `conflict`, preserves the user's file and the
   pending proposal, and requires an explicit reload/reduction or abandonment.
 
@@ -215,27 +215,30 @@ following source tree is final for Phase 1's readable-vault shell:
 
 ```text
 server/
-  main.js                 loopback server/process lifecycle
-  http-api.js             same-origin command and snapshot routes
-  sse.js                  event stream and replay boundary
+  main.mjs                loopback server/process lifecycle
+  http-api.mjs            same-origin command and snapshot routes
+  sse.mjs                 reserved event stream and replay boundary
 runtime/vault/
-  paths.js                manifest binding and path containment
-  reader.js               read-only manifest/topic/document loading
-  projections.js          five-view projections and empty/error states
-  revisions.js            Git-compatible blob fingerprints
+  paths.mjs               manifest binding and path containment
+  reader.mjs              read-only manifest/topic/document loading
+  projections.mjs         four-view projections and empty/error states
+  revisions.mjs           Git-compatible blob fingerprints
 web/
   index.html              application shell
   app.js                  browser navigation/state rendering
   styles.css
 tests/fixtures/vault/     synthetic schema fixtures only
+tests/task_1_1.test.mjs
 tests/vault_contract.test.js
 tests/vault_live_probe.js
 ```
 
-Phase 1 does not create the production modules yet; it only fixes ownership
-boundaries and names. `runtime/vault` is the only future module allowed to
-read canonical vault files. `server` never embeds schema mapping, and `web`
-never receives filesystem paths or credentials.
+The Phase 1 shell implements `main.mjs`, `http-api.mjs`, all four
+`runtime/vault/*.mjs` modules, and the `web/` assets. `sse.mjs` remains a
+reserved boundary for a later task because this read-only shell has no live
+turn events. `runtime/vault` is the only module allowed to read canonical vault
+files. `server` never embeds schema mapping, and `web` never receives
+filesystem paths or credentials.
 
 ## Verification evidence and limits
 

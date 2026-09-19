@@ -1,0 +1,1 @@
+{"schemaVersion":2,"documentType":"vault-manifest","vaultId":"synthetic:malformed","topics":{"broken":{"statePath":"topics/broken/state.json"}}}

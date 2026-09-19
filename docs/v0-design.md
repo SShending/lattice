@@ -17,15 +17,15 @@ The Study Runtime lives in the Lattice Local Server, above Codex. It is not a Co
 
 | View | Content | V0 interactions and acceptance |
 | --- | --- | --- |
-| Study | Active topic, conversation, current focus, turn phase, recent learning checkpoints | Send, cancel generation, retry failed finalization, start/resume a session. Stream the answer; show “Saving learning changes” until commit, then a summary with links to changed notes/state. |
-| Topics | Existing topic titles, goals, focus, last recorded activity | Explicitly select a topic or browse another. A switch starts/resumes that topic's session only after the current turn reaches a safe terminal state. Invalid topics show an actionable validation error. |
+| Study | Active topic, conversation, current focus, turn phase, recent learning checkpoints | Send, cancel generation, retry failed finalization, start/resume a session. Stream the answer; show “Saving learning changes” until commit, then a summary with links to changed notes and the updated learner-model projection. |
+| Topic selector | Existing topic titles, goals, focus, last recorded activity | Global top-bar context for selecting a topic shared by Study, Roadmap, Understanding, and Notes. |
 | Roadmap | Existing topic milestones/order and current focus, linked to relevant state | Read-only navigation in V0. Missing roadmap data shows an empty state, not an invented plan or inferred mastery percentage. |
 | Notes | Topic note list, rendered Markdown, source and revision details | Open, create, edit, preview, save, or discard an unsaved draft. Existing note deletion is deferred. Changes from a turn are visibly marked after commit. |
-| State | Goal, focus, evidence-backed understanding, uncertainty, misconceptions, next objective | Edit supported fields through a validated form. Show the revision and origin of changes; preserve unsupported fields. Corrections are recorded as user edits, not fabricated assessment evidence. |
+| Understanding | Goal, focus, evidence-backed understanding, uncertainty, misconceptions, next objective | Read-only learner model. Corrections are produced by Study interactions and validated Reducer updates, not direct state edits. |
 
-Layout is flexible: topic navigation, a central study area, and a state panel are a useful starting point. Views share the active topic and committed revision, not separate copies of learning data.
+Layout is flexible: a global active-topic selector, a central study area, and an Understanding panel are a useful starting point. Views share the active topic and committed revision, not separate copies of learning data.
 
-All views distinguish loading, empty, invalid, disconnected, and ready states. Notes/State editors distinguish draft, saving, saved, failed, and conflict states. Preserve drafts while browsing or receiving updates; prompt before discarding them. A successful edit returns the new committed revision and updates relevant views. No change badge or “Saved” claim precedes persistence.
+All views distinguish loading, empty, invalid, disconnected, and ready states. Notes editors distinguish draft, saving, saved, failed, and conflict states; Understanding remains read-only. Preserve drafts while browsing or receiving updates; prompt before discarding them. A successful edit returns the new committed revision and updates relevant views. No change badge or “Saved” claim precedes persistence.
 
 Browsing and local editing work without a Codex connection. A browser refresh reloads committed records; pending drafts must be explicitly warned about or recoverable, never represented as saved.
 
@@ -91,11 +91,11 @@ V0 admits only one in-flight study turn. Topic browsing remains available; switc
 ## V0 acceptance scenario
 
 1. Open the local UI against an existing topic with non-empty state, notes, and a roadmap if present.
-2. Inspect all five views; missing optional records show honest empty states.
+2. Inspect Study, Roadmap, Understanding, and Notes; missing optional records show honest empty states.
 3. Start a fresh Codex-backed session and verify continuity from the vault.
 4. Complete turns demonstrating understanding, uncertainty, a corrected misconception, a reusable note, and a trivial no-change exchange.
 5. Observe streaming → saving → saved. Verify appropriate state/notes/checkpoints and inspect why each change occurred.
-6. Edit a note and state field in the UI. Reload and start another turn; both changes remain authoritative and influence context.
+6. Edit a note in the UI. Reload and start another turn; the note remains authoritative and influences context. Learner-state corrections occur through a Study interaction and Reducer update, not a direct form.
 7. Make an overlapping edit during generation. Verify conflict handling preserves the user's work.
 8. Inject invalid reducer output, write failure, duplicate delivery, cancellation, browser reconnect, and process interruption during each commit stage. Verify no false completion, duplicate note, or silent overwrite.
 9. Restart with a fresh Codex thread and verify learning continuity; do not unnecessarily reteach already demonstrated knowledge.

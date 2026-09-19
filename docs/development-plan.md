@@ -2,13 +2,13 @@
 
 ## Current position
 
-The repository contains the agreed product documentation plus Phase 0
-protocol/vault fixtures and probes; no application implementation phase is
-complete or in progress. The user has agreed to [the V0 direction](../INIT.md);
+The repository contains the agreed product documentation plus the completed
+Phase 0 contracts and the completed Phase 1 readable-vault shell. The user has
+agreed to [the V0 direction](../INIT.md);
 this plan replaces the former DSH integration sequence. Keep at most one task in
 progress and attach acceptance evidence before marking it complete.
 
-Source paths below are proposed module locations, to finalize in Phase 0. No files listed as implementation targets have been created. Each phase depends on the preceding phase unless noted. Use synthetic or redacted vault fixtures.
+Source paths below are the selected module locations. Each phase depends on the preceding phase unless noted. Use synthetic or redacted vault fixtures.
 
 ## Phase 0 — Verify integration contracts
 
@@ -49,13 +49,28 @@ Source paths below are proposed module locations, to finalize in Phase 0. No fil
 
 ## Phase 1 — Local Web shell and readable vault
 
-**Task 1.1 — Five views. Status: pending.**
+**Task 1.1 — Four views and global topic context. Status: complete (2026-09-18).**
 
-- Files: proposed `web/`, `server/`, `runtime/vault/`, `tests/fixtures/`; update README with real startup instructions only once verified.
-- Work: serve same-origin UI/API on loopback; configure one vault; render Study shell, Topics, Roadmap, Notes, and State. Add explicit topic navigation, Markdown rendering, schema errors, empty states, and committed revisions. No model integration or canonical writes yet.
-- Automated verification: fixture projections, unknown-field preservation on reads, path containment, hostile Markdown, rejected cross-origin mutations, correct topic isolation.
+- Files: `web/`, `server/`, `runtime/vault/`, and `tests/fixtures/`; README startup instructions are verified below.
+- Work: serve same-origin UI/API on loopback; configure one vault; render Study, Roadmap, Understanding, and Notes with global topic selection. Add global topic navigation, Markdown rendering, schema errors, empty states, and committed revisions. Understanding is inspectable only; no model integration or canonical writes yet.
+- Automated verification: fixture projections, unknown-field preservation on reads, path containment, hostile Markdown, optional learner-state fields, note title/preview extraction, topic switching through the selector, rejected cross-origin mutations, correct topic isolation, and no canonical vault writes.
 - Human verification: open a representative topic and navigate every view; verify empty/missing roadmap and unavailable Codex do not prevent browsing.
-- Acceptance: all five views match source records without modifying the vault.
+- Acceptance: all four views match source records without modifying the vault; topic selection is not a standalone page and Understanding is read-only.
+
+  Evidence: `npm test` passes 17/17 tests, covering the fixture-backed views,
+  unknown-field preservation, malformed state, missing roadmap, optional
+  learner-state fields, note title/preview extraction, topic switching,
+  topic isolation, path containment, hostile Markdown, no-write snapshots,
+  and cross-origin mutation rejection. The server was started with
+  `LATTICE_VAULT_ROOT=/home/tahanan/learn/learning-vault PORT=4317 npm start`
+  and bound to `127.0.0.1:4317`; live probes returned ready health, nine topics,
+  a roadmap-rich topic, and the sparse `software-development` topic with
+  `roadmap: null`. The served HTML/CSS/ES-module assets returned successfully.
+  A before/after snapshot of the authorized vault remained unchanged. Firefox
+  154.0 was installed but headless screenshot capture crashed in this
+  environment, so visual browser capture remains a tooling limitation; direct
+  browser-facing HTTP and fixture integration checks passed. No canonical
+  vault writes were made.
 
 ## Phase 2 — Reliable persistence and user editing
 
@@ -67,13 +82,13 @@ Source paths below are proposed module locations, to finalize in Phase 0. No fil
 - Human verification: inspect recovered fixture files and an intentionally conflicted transaction.
 - Acceptance: recovery proves the invariants in architecture before model-driven writes exist.
 
-**Task 2.2 — Notes and State editors. Status: pending.**
+**Task 2.2 — Notes editor and read-only Understanding. Status: pending.**
 
 - Files: proposed `web/`, `server/`, `runtime/vault/`, `tests/editing/`.
-- Work: note creation/editing and supported State forms; draft/save/error/conflict states, origin records, validation, revision-aware saves, and view refresh events. Preserve unknown fields and unsaved drafts.
-- Automated verification: save/reload, invalid fields, duplicate save, stale revision, incoming update with open draft, and user-correction provenance.
-- Human verification: edit note/state, restart, inspect saved data, and resolve a competing browser-tab edit.
-- Acceptance: edits survive restart, remain visible, and cannot be silently overwritten.
+- Work: note creation/editing and draft/save/error/conflict states, origin records, validation, revision-aware saves, and view refresh events. Understanding remains inspectable and is corrected through Study/Reducer updates rather than direct learner-state editing. Preserve unknown fields and unsaved note drafts.
+- Automated verification: note save/reload, invalid fields, duplicate save, stale revision, incoming update with open note draft, and user-correction provenance. Assert no Understanding mutation endpoint or direct `state.json` editor exists.
+- Human verification: edit a note, restart, inspect saved data, and resolve a competing browser-tab edit; inspect Understanding and correct a learner judgment through a later Study interaction rather than a form.
+- Acceptance: note edits survive restart, remain visible, and cannot be silently overwritten; Understanding remains read-only and learner-state corrections retain provenance.
 
 ## Phase 3 — Codex-backed Tutor and study control
 
@@ -98,9 +113,9 @@ Source paths below are proposed module locations, to finalize in Phase 0. No fil
 **Task 4.2 — Visible learning changes and session continuity. Status: pending.**
 
 - Files: proposed `web/`, `server/`, `runtime/study/`, `tests/e2e/`.
-- Work: saving/saved/error feedback, links to changed notes/state, compact session history, resume/retry controls, and safe topic switching. Reconcile SSE gaps from authoritative snapshots.
+- Work: saving/saved/error feedback, links to changed notes and the updated Understanding projection, compact session history, resume/retry controls, and safe topic switching. Reconcile SSE gaps from authoritative snapshots.
 - Automated verification: lost completion event, refresh during save, restart after commit, stale drafts, topic switching, and fresh Codex thread with existing state.
-- Human verification: see a new note appear and state change only after commit; edit each and confirm the next turn uses the edits.
+- Human verification: see a new note appear and learner-model change only after commit; edit the note and confirm the next turn uses it, while state corrections remain Study/Reducer-driven.
 - Acceptance: a learner can tell what changed, whether it is saved, and what to do when it is not.
 
 ## Phase 5 — V0 acceptance and handoff

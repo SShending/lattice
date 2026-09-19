@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "documentType": "vault-manifest",
+  "vaultId": "synthetic:vault",
+  "topics": {
+    "complete-topic": { "statePath": "topics/complete-topic/state.json", "futureBinding": "keep" },
+    "legacy-topic": { "statePath": "topics/legacy-topic/state.json" }
+  },
+  "futureManifestField": { "owner": "fixture", "enabled": true }
+}

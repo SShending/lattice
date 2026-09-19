@@ -25,13 +25,13 @@ Lattice Local Server
 | Codex Adapter | Child process, protocol/version compatibility, thread/turn mapping, events, approvals, interruptions | Vault writes or mastery decisions |
 | Vault Repository | Schema mapping, revision checks, validation, journaled commits, recovery | Model calls or UI state |
 
-Use a small typed interface between these responsibilities. Avoid a general plugin framework or provider framework in V0. Framework/language and final source paths are Phase 0 choices; HTTP plus SSE and a child-process adapter define boundaries without requiring a particular framework.
+Use a small typed interface between these responsibilities. Avoid a general plugin framework or provider framework in V0. The selected Phase 0 stack is Node.js 22.23.1 with built-in HTTP/filesystem APIs and a vanilla browser ES-module UI; HTTP plus SSE and a child-process adapter define boundaries without requiring a framework.
 
 The planned launcher starts one local server, acquires the vault writer lock, recovers pending writes, starts/connects its Codex child, and opens a loopback URL. Shutdown stops new turns, interrupts generation, completes or journals pending commits, and closes the owned child. No executable launcher exists yet.
 
 ## Browser contract
 
-Commands cover listing/selecting topics, loading topic views, starting/resuming a study session, submitting/cancelling a turn, retrying finalization, and saving notes/state. Mutation requests carry stable operation IDs and expected revisions. Responses return operation status and committed revision or an explicit validation/conflict error.
+Commands cover listing/selecting topics through the global workspace selector, loading topic views, starting/resuming a study session, submitting/cancelling a turn, retrying finalization, and saving notes. Understanding is a read-only projection; learner-state changes are emitted by the Study/Reducer path only. Mutation requests carry stable operation IDs and expected revisions. Responses return operation status and committed revision or an explicit validation/conflict error.
 
 Events carry an event ID/sequence, session/topic/turn identity, phase, and relevant revision. The UI ignores duplicate events and events for unrelated views. SSE reconnect requests missed events when retained; otherwise it fetches a fresh authoritative snapshot and active-turn status. Event replay is a UI convenience, never the durability authority.
 
@@ -87,7 +87,7 @@ their Markdown bodies are opaque. Do not infer a roadmap, add frontmatter,
 regenerate README projections, or overwrite unknown fields. Any migration
 would require explicit approval in a later task.
 
-The local vault remains authoritative. Browser caches, Codex history, and any search/index projections are disposable. Operational transaction metadata is separate from learning content but must be stored locally with a documented recovery location. No database, vector store, or GitHub call is required in the study path. Git commits/pushes are user-managed and are not part of successful persistence.
+The local vault remains authoritative. Browser caches, Codex history, and any search/index projections are disposable. Operational transaction metadata is separate from learning content but must be stored locally with a documented recovery location. No database, vector store, or GitHub call is required in the study path. Git commits/pushes are user-managed and are not part of successful persistence. Phase 1 implements only read-only `runtime/vault/*.mjs`, `server/*.mjs`, and `web/*` modules; writes and Codex integration remain later-phase work.
 
 ## Persistence and edit invariants
 
@@ -102,6 +102,6 @@ The local vault remains authoritative. Browser caches, Codex history, and any se
 9. A validated no-op checkpoints evaluation against the existing state revision. Missing or invalid state is not a no-op.
 10. Note identity and update IDs prevent duplicate creation on retries. A note failure also prevents successful turn completion.
 
-Manual notes/state saves use this same path with `origin=user`, expected revisions, and a compact change record. User assertions remain distinguishable from assessed evidence. Rejected edits leave canonical files intact and retain the browser draft. On conflict show the latest content and the draft; require explicit reconciliation or reload rather than last-write-wins.
+Manual note saves use this same path with `origin=user`, expected revisions, and a compact change record. Understanding has no manual save path: learner-state corrections are attributable to a Study/Reducer update, with user corrections distinguishable from assessed evidence. Rejected edits leave canonical files intact and retain the browser draft. On conflict show the latest content and the draft; require explicit reconciliation or reload rather than last-write-wins.
 
 Learning proposals are automatically persisted only when valid and non-conflicting. Keep stable reducer inputs and validated proposals as needed for recovery; minimize retained transcripts. Define cleanup/retention in Phase 0 so pending transactions are never removed prematurely. Ordinary filesystem viewers may observe intermediate files during recovery; the consistency guarantee applies to Lattice readers and completed operations, not arbitrary outside readers.

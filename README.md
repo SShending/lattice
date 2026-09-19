@@ -1,13 +1,13 @@
 # Lattice
 
-Lattice is a local-first Web application for persistent learning: study a topic, see what changed, and edit the notes and learner state that guide the next interaction.
+Lattice is a local-first Web application for persistent learning: study a topic, see what changed, and keep the notes and learner model that guide the next interaction.
 
 **A successful study turn is not complete until its validated learning changes have been durably saved.** A streamed answer alone is not completion.
 
 ## Agreed V0 direction
 
 ```text
-Browser: Study · Topics · Roadmap · Notes · State
+Browser: Study · Roadmap · Understanding · Notes
                        │ HTTP commands + SSE events
                        ▼
              Lattice Local Server
@@ -26,10 +26,10 @@ V0 is Web-first: a local server serves the browser UI and starts Codex App Serve
 
 ## What V0 will provide
 
-- Explicit topic selection, with one active topic per study session.
+- Explicit topic selection in the global top bar, with one active topic per study session.
 - Study chat with streaming, cancellation, honest save status, and visible learning changes.
-- Topics and Roadmap views backed by existing vault records.
-- Readable, editable Notes and State with validation and conflict handling.
+- Roadmap and Understanding views backed by existing vault records.
+- Readable Notes with validation and conflict handling; Understanding is inspectable and read-only.
 - Reliable state, note, and session-checkpoint persistence across restarts.
 - Codex-managed ChatGPT sign-in; no Lattice-managed OpenAI credentials.
 
@@ -37,7 +37,30 @@ Local-first describes storage and application hosting, not offline inference: se
 
 ## Repository status and reading order
 
-**Documentation only; no application, launcher, installation command, or tests are implemented yet.**
+Phase 1 Task 1.1 provides a read-only local Web shell over the existing vault.
+It does not write canonical learning files and does not require Codex to browse
+topics.
+
+## Run the read-only shell
+
+Requirements: Node.js 22.23.1 and a local checkout of
+`SShending/learning-vault`.
+
+```bash
+LATTICE_VAULT_ROOT=/home/tahanan/learn/learning-vault npm start
+```
+
+Then open <http://127.0.0.1:4317>. The server binds to loopback only. Set
+`PORT` to choose another loopback port. The shell exposes Study, Roadmap,
+Understanding, and Notes views; the active topic is selected in the top bar.
+Codex is intentionally unavailable until Phase 3; vault browsing remains
+available.
+
+Tests use only synthetic fixtures:
+
+```bash
+npm test
+```
 
 1. [Product brief](INIT.md) — agreed intent, scope, and non-goals.
 2. [V0 design](docs/v0-design.md) — views, learning domain, lifecycle, and acceptance.
