@@ -1,3 +1,5 @@
+import { createNoteDraftState, reconcileNoteDraftState } from './note-drafts.mjs';
+
 const app = document.querySelector('#app');
 const select = document.querySelector('#topic-select');
 const connection = document.querySelector('#connection');
@@ -7,6 +9,11 @@ let topics = [];
 let activeTopic = localStorage.getItem('lattice.activeTopic') || '';
 let selectedNoteId = '';
 let selectedRoadmapId = '';
+const selectedNoteByTopic = new Map();
+const noteDrafts = new Map();
+let renderedTopic = null;
+let notesRefreshTimer = null;
+let notesRefreshInFlight = false;
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const list = (values, empty = 'Nothing recorded in the vault.') => Array.isArray(values) && values.length
@@ -20,6 +27,18 @@ async function getJson(url) {
   return data;
 }
 
+async function putJson(url, value) {
+  const response = await fetch(url, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
+  const data = await response.json();
+  if (!response.ok) {
+    const error = new Error(data.message || data.error || 'Request failed');
+    error.data = data;
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
 function formatDate(value) {
   if (!value) return 'No recorded activity';
   const date = new Date(value);
@@ -29,8 +48,10 @@ function formatDate(value) {
 
 function setActiveTopic(id, view = location.hash.slice(1) || 'study') {
   if (view === 'topics') view = 'study';
+  const previous = noteDrafts.get(draftKey(activeTopic, selectedNoteId));
+  if (previous?.dirty) previous.editing = false;
   activeTopic = id;
-  selectedNoteId = '';
+  selectedNoteId = selectedNoteByTopic.get(id) || '';
   selectedRoadmapId = '';
   localStorage.setItem('lattice.activeTopic', activeTopic);
   select.value = activeTopic;
@@ -54,6 +75,74 @@ async function loadTopic() {
 
 function sourceLine(topic, label = 'Committed source') {
   return `<details class="source-details"><summary>Source details</summary><div class="source-line"><span>${esc(label)}</span><code>state.json ${esc(topic.source.stateRevision)}</code></div></details>`;
+}
+
+function randomId(prefix) {
+  const value = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${value}`.slice(0, 120);
+}
+
+function draftKey(topicId, noteId) { return `${topicId}/${noteId}`; }
+
+function createDraft(topic, note, requestedNoteId = '') {
+  const noteId = note?.id || requestedNoteId || randomId('note');
+  return {
+    ...createNoteDraftState(topic, note, noteId),
+    operationId: randomId('note-op'),
+    updateId: randomId('note-update'),
+  };
+}
+
+function rotateRequestIds(draft) {
+  draft.operationId = randomId('note-op');
+  draft.updateId = randomId('note-update');
+}
+
+function draftFor(topic, note) {
+  const noteId = note?.id || selectedNoteId;
+  const key = draftKey(topic.id, noteId);
+  let draft = noteDrafts.get(key);
+  if (!draft) {
+    draft = createDraft(topic, note, noteId);
+    noteDrafts.set(key, draft);
+  }
+  return reconcileNoteDraftState(draft, topic, note);
+}
+
+function topicSignature(topic) {
+  if (!topic) return '';
+  return `${topic.source?.stateRevision || ''}|${topic.notes.map((note) => `${note.id}:${note.revision}`).join('|')}`;
+}
+
+function stopNotesRefresh() {
+  if (notesRefreshTimer !== null) window.clearInterval(notesRefreshTimer);
+  notesRefreshTimer = null;
+}
+
+function startNotesRefresh() {
+  stopNotesRefresh();
+  if ((location.hash.slice(1) || 'study') !== 'notes') return;
+  notesRefreshTimer = window.setInterval(() => { refreshNotes().catch(() => {}); }, 5000);
+}
+
+async function refreshNotes() {
+  if (notesRefreshInFlight || (location.hash.slice(1) || 'study') !== 'notes' || !activeTopic || document.visibilityState === 'hidden') return;
+  notesRefreshInFlight = true;
+  try {
+    const latest = await loadTopic();
+    if (!latest || topicSignature(latest) === topicSignature(renderedTopic)) return;
+    paint('notes', latest);
+  } finally {
+    notesRefreshInFlight = false;
+  }
+}
+
+function draftStatusLabel(draft) {
+  if (draft.inFlight && draft.version === draft.inFlight.version) return 'Saving...';
+  if (draft.status === 'saved' && !draft.dirty) return 'Saved';
+  if (draft.status === 'conflict') return 'Conflict';
+  if (draft.status === 'error') return 'Save failed';
+  return 'Unsaved draft';
 }
 
 function readableLabel(value) {
@@ -135,17 +224,37 @@ function renderUnderstanding(topic) {
   const conceptQuestions = topic.concepts.filter((concept) => concept.openQuestion).map((concept) => concept.name);
   const uncertainty = [...state.unassessed, ...conceptQuestions.filter((item) => !state.unassessed.includes(item))];
   const evidence = Array.isArray(topic.evidence) ? topic.evidence.filter((item) => item.summary || item.result) : [];
-  const evidenceMarkup = evidence.length ? `<ul class="evidence-list">${evidence.map((item) => `<li><div><strong>${esc(item.concept || 'Learning evidence')}</strong><small>${esc(readableLabel(item.type || 'evidence'))}${item.observedAt ? ` · ${esc(formatDate(item.observedAt))}` : ''}</small></div><p>${esc(item.summary || `${item.result || 'Recorded'} evidence`)}</p></li>`).join('')}</ul>` : '';
+  const evidenceMarkup = evidence.length ? `<ul class="evidence-list">${evidence.map((item) => `<li><div><strong>${esc(item.concept || 'Learning evidence')}</strong><small>${esc(readableLabel(item.type || 'evidence'))}${item.observedAt ? ` - ${esc(formatDate(item.observedAt))}` : ''}</small></div><p>${esc(item.summary || `${item.result || 'Recorded'} evidence`)}</p></li>`).join('')}</ul>` : '';
   const progress = roadmapProgress(topic.roadmap);
   const currentFocus = explicitTopicComplete(topic) ? '' : `<section class="state-focus compact-focus"><span class="section-kicker">Current focus</span><p>${esc(state.currentFocus || 'No current focus recorded.')}</p></section>`;
   return `${pageHeader(topic, 'UNDERSTANDING', 'How Lattice understands you', 'Read-only, based on the committed learner model.')}<div class="state-layout"><section class="understanding-summary"><div><span class="section-kicker">Established</span><strong>${established.length}</strong><span>concepts</span></div><div><span class="section-kicker">Uncertain</span><strong>${uncertainty.length}</strong><span>items</span></div><div><span class="section-kicker">Roadmap</span><strong>${progress.demonstrated}/${progress.total}</strong><span>demonstrated</span></div></section>${currentFocus}<section class="state-section established"><div class="state-section-heading"><div><span class="section-kicker">Established understanding</span><h2>What appears well understood</h2></div><span class="section-count">${established.length} ${established.length === 1 ? 'concept' : 'concepts'}</span></div>${established.length ? `<ul class="concept-list">${established.map((concept) => `<li><span class="concept-check" aria-hidden="true">&#10003;</span><span class="concept-copy"><strong>${esc(concept.name)}</strong><small>${concept.evidenceCount} evidence ${concept.evidenceCount === 1 ? 'record' : 'records'}</small></span></li>`).join('')}</ul>` : '<p class="empty-copy compact-empty">No demonstrated concepts recorded.</p>'}</section><section class="state-section uncertain"><div class="state-section-heading"><div><span class="section-kicker">Still uncertain</span><h2>What remains unclear</h2></div><span class="section-count">${uncertainty.length} ${uncertainty.length === 1 ? 'item' : 'items'}</span></div>${uncertainty.length ? list(uncertainty) : '<p class="empty-copy compact-empty">No open uncertainty recorded.</p>'}</section>${state.misconceptions.length ? `<section class="state-section misconceptions"><div class="state-section-heading"><div><span class="section-kicker">Misconceptions</span><h2>Corrections to revisit</h2></div></div>${list(state.misconceptions)}</section>` : ''}<section class="state-section next-objective"><div><span class="section-kicker">Next objective</span><p class="objective-copy">${esc(state.nextStep || 'No next objective recorded.')}</p><details class="assessment-details"><summary>Why this is next</summary><p>${esc(state.nextStepReason || 'No reason has been recorded for this objective.')}</p></details></div><a class="text-link" href="#roadmap">See roadmap <span aria-hidden="true">-&gt;</span></a></section>${evidence.length ? `<details class="evidence-details"><summary>Supporting evidence <span>${evidence.length} records</span></summary>${evidenceMarkup}</details>` : '<p class="empty-copy compact-empty">No supporting evidence recorded.</p>'}<footer class="state-footer"><span>Read-only learner model</span><details class="assessment-details"><summary>Target capability</summary><p>${esc(state.targetCapability || 'No target capability recorded.')}</p></details></footer></div>${sourceLine(topic)}`;
 }
 
 function renderNotes(topic) {
-  if (!topic.notes.length) return `${pageHeader(topic, 'NOTES', 'Knowledge library', 'Durable notes captured for this topic, rendered from their original Markdown bodies.')}${emptyState('No notes recorded', 'This topic has no indexed learning notes.')}${sourceLine(topic)}`;
-  if (!selectedNoteId || !topic.notes.some((note) => note.id === selectedNoteId)) selectedNoteId = topic.notes[0].id;
-  const selected = topic.notes.find((note) => note.id === selectedNoteId) || topic.notes[0];
-  return `${pageHeader(topic, 'NOTES', 'Knowledge library', 'Durable explanations recorded for this topic.')}<div class="notes-layout"><div class="note-index"><div class="section-heading"><div><span class="section-kicker">Notes</span><h2>${topic.notes.length} ${topic.notes.length === 1 ? 'note' : 'notes'}</h2></div></div>${topic.notes.map((note) => `<button class="note-index-row ${note.id === selected.id ? 'selected' : ''}" data-note="${esc(note.id)}" aria-current="${note.id === selected.id ? 'true' : 'false'}"><span class="note-index-title">${esc(note.title)}</span>${note.preview ? `<span class="note-index-preview">${esc(note.preview)}</span>` : ''}<span class="note-index-meta">${esc(readableLabel(note.index.claimStatus || note.index.kind || 'note'))} · ${esc(formatDate(note.index.updatedAt))}</span></button>`).join('')}</div><article class="note-reader"><div class="note-reader-top"><div><span class="section-kicker">Reading note</span><h2>${esc(selected.title)}</h2></div><span class="note-status">${esc(readableLabel(selected.index.claimStatus || selected.index.kind || 'note'))}</span></div><div class="markdown note-markdown">${selected.html}</div><details class="source-details note-source-details"><summary>Source details</summary><div class="note-source"><span>Committed note revision</span><code>${esc(selected.revision)}</code></div></details></article></div>${sourceLine(topic)}`;
+  if (!selectedNoteId) selectedNoteId = selectedNoteByTopic.get(topic.id) || topic.notes[0]?.id || randomId('note');
+  selectedNoteByTopic.set(topic.id, selectedNoteId);
+  const selected = topic.notes.find((note) => note.id === selectedNoteId) || null;
+  const draft = draftFor(topic, selected);
+  const title = selected ? selected.title : 'New note';
+  const noteRows = topic.notes.map((note) => `<button class="note-index-row ${note.id === selected?.id ? 'selected' : ''}" data-note="${esc(note.id)}" aria-current="${note.id === selected?.id ? 'true' : 'false'}"><span class="note-index-title">${esc(note.title)}</span>${note.preview ? `<span class="note-index-preview">${esc(note.preview)}</span>` : ''}<span class="note-index-meta">${esc(readableLabel(note.index.claimStatus || note.index.kind || 'note'))} - ${esc(formatDate(note.index.updatedAt))}</span></button>`).join('');
+  const conflictMarkup = draft.status === 'conflict' ? `<aside class="note-conflict" data-note-conflict><strong>Latest committed version is available.</strong><span>Your draft remains in the editor until you choose what to do.</span>${draft.latest ? `<details><summary>View latest</summary><div class="note-conflict-latest"><strong>${esc(resolveLatestTitle(draft.latest))}</strong><pre>${esc(draft.latest.body)}</pre></div></details>` : '<span>The note was removed from the committed vault.</span>'}<div class="note-conflict-actions"><button class="button-secondary" type="button" data-reload-latest>Reload latest</button></div></aside>` : '';
+  const draftNotice = selected && draft.dirty && !draft.editing ? `<aside class="note-draft-notice" data-draft-notice><strong>Unsaved draft available.</strong><span>The document below is the committed version.</span><button class="button-secondary" type="button" data-edit-note>Continue editing</button></aside>` : '';
+  const editor = `<form class="note-form" data-note-form><label>Title<input name="title" maxlength="240" value="${esc(draft.title)}" placeholder="Optional note title"></label><label>Markdown<textarea name="body" maxlength="1048576" required>${esc(draft.body)}</textarea></label><div class="note-form-meta"><label>Kind<select name="kind"><option value="" ${draft.kind ? '' : 'selected'}>Unspecified</option><option value="learning_note" ${draft.kind === 'learning_note' ? 'selected' : ''}>Learning note</option><option value="working_model" ${draft.kind === 'working_model' ? 'selected' : ''}>Working model</option></select></label><label>Claim status<select name="claimStatus"><option value="" ${draft.claimStatus ? '' : 'selected'}>Unspecified</option><option value="working_model" ${draft.claimStatus === 'working_model' ? 'selected' : ''}>Working model</option><option value="confirmed" ${draft.claimStatus === 'confirmed' ? 'selected' : ''}>Confirmed</option></select></label></div><div class="note-form-actions"><button class="button-primary" type="submit" data-save-note>Save</button><button class="button-secondary" type="button" data-cancel-note ${draft.inFlight ? 'disabled' : ''}>Cancel</button><span class="note-form-hint">Source metadata and unknown state fields are preserved.</span></div><p class="note-form-message" data-note-message>${esc(draft.error || draft.message)}</p></form>`;
+  const reader = selected ? `${draftNotice}${draft.message ? `<p class="note-save-message" data-note-message>${esc(draft.message)}</p>` : ''}<div class="markdown note-markdown" data-note-markdown>${selected.html || '<p class="empty-copy">This note is empty.</p>'}</div>${draft.dirty ? '' : '<div class="note-reader-actions"><button class="button-primary" type="button" data-edit-note>Edit</button></div>'}` : editor;
+  const mode = draft.editing || !selected ? editor : reader;
+  return `${pageHeader(topic, 'NOTES', 'Knowledge library', 'Read committed notes or edit them with revision-aware saves.')}<div class="notes-layout"><div class="note-index"><div class="section-heading"><div><span class="section-kicker">Notes</span><h2>${topic.notes.length} ${topic.notes.length === 1 ? 'note' : 'notes'}</h2></div><div class="note-index-actions"><button class="button-secondary" data-refresh-notes type="button">Refresh</button><button class="button-secondary" data-new-note type="button">New note</button></div></div>${noteRows || '<p class="empty-copy note-index-empty">No notes yet.</p>'}</div><article class="note-reader note-editor"><div class="note-reader-top"><div><span class="section-kicker">${draft.editing ? (selected ? 'Editing note' : 'Creating note') : 'Committed note'}</span><h2>${esc(draft.editing ? (draft.title || title) : title)}</h2></div>${draft.editing || draft.dirty || draft.status === 'saved' ? `<span class="note-status ${esc(draft.status)}" data-note-status>${esc(draftStatusLabel(draft))}</span>` : ''}</div>${conflictMarkup}${mode}<details class="source-details note-source-details"><summary>Revision and provenance</summary><div class="note-source"><span>State revision</span><code>${esc(draft.expectedStateRevision)}</code><span>Note revision</span><code>${esc(draft.expectedRevision || 'new file')}</code><span>Origin</span><code>user</code></div></details></article></div>${sourceLine(topic)}`;
+}
+
+function resolveLatestTitle(note) {
+  return note?.index?.title || note?.id || 'Latest note';
+}
+
+function paint(view, topic) {
+  renderedTopic = topic;
+  app.innerHTML = view === 'roadmap' ? renderRoadmap(topic) : view === 'notes' ? renderNotes(topic) : view === 'understanding' ? renderUnderstanding(topic) : renderStudy(topic);
+  bindInteractions();
+  if (view === 'notes') startNotesRefresh();
+  else stopNotesRefresh();
 }
 
 async function render() {
@@ -161,8 +270,7 @@ async function render() {
       app.innerHTML = emptyState('No topics available', 'The configured vault has no readable topic bindings.');
       return;
     }
-    app.innerHTML = view === 'roadmap' ? renderRoadmap(topic) : view === 'notes' ? renderNotes(topic) : view === 'understanding' ? renderUnderstanding(topic) : renderStudy(topic);
-    bindInteractions();
+    paint(view, topic);
   } catch (error) {
     console.error('Lattice view projection failed', error);
     app.innerHTML = `<section class="error-state"><span class="empty-mark">!</span><h1>Projection unavailable</h1><p>The vault is ready, but this view could not be projected from its committed records.</p><p class="empty-copy">Optional or malformed data in this view was not displayed. Canonical learning data was not modified.</p></section>`;
@@ -180,11 +288,151 @@ function bindInteractions() {
       detail?.focus({ preventScroll: true });
     }
   }));
-  app.querySelectorAll('[data-note]').forEach((button) => button.addEventListener('click', () => { selectedNoteId = button.dataset.note; render(); }));
+  app.querySelectorAll('[data-note]').forEach((button) => button.addEventListener('click', () => {
+    const previous = noteDrafts.get(draftKey(activeTopic, selectedNoteId));
+    if (previous?.dirty) previous.editing = false;
+    selectedNoteId = button.dataset.note;
+    selectedNoteByTopic.set(activeTopic, selectedNoteId);
+    render();
+  }));
+  app.querySelector('[data-new-note]')?.addEventListener('click', () => {
+    const previous = noteDrafts.get(draftKey(activeTopic, selectedNoteId));
+    if (previous?.dirty) previous.editing = false;
+    selectedNoteId = randomId('note');
+    selectedNoteByTopic.set(activeTopic, selectedNoteId);
+    noteDrafts.delete(draftKey(activeTopic, selectedNoteId));
+    render();
+  });
+  app.querySelector('[data-refresh-notes]')?.addEventListener('click', () => { refreshNotes().catch(() => {}); });
+  app.querySelectorAll('[data-edit-note]').forEach((button) => button.addEventListener('click', () => {
+    const draft = noteDrafts.get(draftKey(activeTopic, selectedNoteId));
+    if (!draft) return;
+    draft.editing = true;
+    draft.message = '';
+    render();
+  }));
+  const form = app.querySelector('[data-note-form]');
+  const cancelDraft = () => {
+    const draft = noteDrafts.get(draftKey(activeTopic, selectedNoteId));
+    if (!draft) return;
+    if (draft.dirty && !window.confirm('Discard this unsaved draft?')) return;
+    const wasNew = !renderedTopic?.notes.some((note) => note.id === selectedNoteId);
+    noteDrafts.delete(draftKey(activeTopic, selectedNoteId));
+    if (wasNew) {
+      selectedNoteId = renderedTopic?.notes[0]?.id || '';
+      selectedNoteByTopic.set(activeTopic, selectedNoteId);
+    }
+    render();
+  };
+  app.querySelector('[data-cancel-note]')?.addEventListener('click', cancelDraft);
+  app.querySelector('[data-reload-latest]')?.addEventListener('click', () => {
+    const draft = noteDrafts.get(draftKey(activeTopic, selectedNoteId));
+    const latest = draft?.latest;
+    if (latest) noteDrafts.set(draftKey(activeTopic, selectedNoteId), createDraft(renderedTopic, latest));
+    else noteDrafts.delete(draftKey(activeTopic, selectedNoteId));
+    render();
+  });
+  if (!form) return;
+  const topicId = activeTopic;
+  const noteId = selectedNoteId;
+  const key = draftKey(topicId, noteId);
+  const updateDraft = () => {
+    const current = noteDrafts.get(key);
+    if (!current) return;
+    if (current.failedVersion !== null) {
+      rotateRequestIds(current);
+      current.failedVersion = null;
+    }
+    current.title = form.elements.title.value;
+    current.body = form.elements.body.value;
+    current.kind = form.elements.kind.value;
+    current.claimStatus = form.elements.claimStatus.value;
+    current.version += 1;
+    current.dirty = true;
+    if (current.status !== 'conflict') current.status = 'draft';
+    current.error = '';
+    current.message = '';
+    const status = app.querySelector('[data-note-status]');
+    if (status) { status.textContent = draftStatusLabel(current); status.className = `note-status ${current.status}`; }
+    const message = app.querySelector('[data-note-message]');
+    if (message) message.textContent = '';
+  };
+  form.querySelectorAll('input, textarea, select').forEach((field) => field.addEventListener('input', updateDraft));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const draft = noteDrafts.get(key);
+    if (!draft || draft.inFlight) return;
+    if (!draft.body.trim()) {
+      draft.status = 'error';
+      draft.error = 'Note body is required.';
+      await render();
+      return;
+    }
+    const payload = Object.freeze({
+      body: draft.body,
+      title: draft.title,
+      kind: draft.kind,
+      claimStatus: draft.claimStatus,
+      sources: structuredClone(draft.sources),
+      expectedRevision: draft.expectedRevision,
+      expectedStateRevision: draft.expectedStateRevision,
+      operationId: draft.operationId,
+      updateId: draft.updateId,
+    });
+    const submission = { version: draft.version, payload };
+    draft.inFlight = submission;
+    draft.status = 'saving';
+    draft.error = '';
+    draft.message = '';
+    await render();
+    try {
+      const result = await putJson(`/api/topics/${encodeURIComponent(topicId)}/notes/${encodeURIComponent(noteId)}`, payload);
+      const latestTopic = await getJson(`/api/topics/${encodeURIComponent(topicId)}`);
+      const committed = latestTopic.notes.find((note) => note.id === noteId);
+      draft.expectedRevision = committed?.revision ?? null;
+      draft.expectedStateRevision = latestTopic.source.stateRevision;
+      draft.inFlight = null;
+      draft.error = '';
+      draft.failedVersion = null;
+      rotateRequestIds(draft);
+      if (draft.version === submission.version) {
+        draft.status = 'saved';
+        draft.dirty = false;
+        draft.editing = false;
+        draft.message = result.saved === true ? 'Saved to the committed vault.' : 'Save completed.';
+      } else {
+        draft.status = 'draft';
+        draft.dirty = true;
+      }
+      await render();
+    } catch (error) {
+      draft.inFlight = null;
+      if (draft.version === submission.version) draft.failedVersion = submission.version;
+      else {
+        draft.failedVersion = null;
+        rotateRequestIds(draft);
+      }
+      draft.status = error.status === 409 ? 'conflict' : 'error';
+      draft.error = error.message;
+      await render();
+    }
+  });
 }
 
 select.addEventListener('change', () => setActiveTopic(select.value));
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => {
+  if ((location.hash.slice(1) || 'study') !== 'notes') {
+    for (const draft of noteDrafts.values()) if (draft.dirty) draft.editing = false;
+  }
+  render();
+});
+window.addEventListener('focus', () => { refreshNotes().catch(() => {}); });
+window.addEventListener('beforeunload', (event) => {
+  if (![...noteDrafts.values()].some((draft) => draft.dirty)) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshNotes().catch(() => {}); });
 getJson('/api/topics').then((data) => {
   setTopics(data);
   connection.innerHTML = '<span class="status-dot"></span>Vault ready';

@@ -95,13 +95,27 @@ Source paths below are the selected module locations. Each phase depends on the 
   result. The test fixture is copied to a temporary directory for every case;
   the authorized learning-vault is never used for fault injection.
 
-**Task 2.2 — Notes editor and read-only Understanding. Status: pending.**
+**Task 2.2 — Notes editor and read-only Understanding. Status: complete (second acceptance fixes, 2026-09-20).**
 
 - Files: proposed `web/`, `server/`, `runtime/vault/`, `tests/editing/`.
 - Work: note creation/editing and draft/save/error/conflict states, origin records, validation, revision-aware saves, and view refresh events. Understanding remains inspectable and is corrected through Study/Reducer updates rather than direct learner-state editing. Preserve unknown fields and unsaved note drafts.
 - Automated verification: note save/reload, invalid fields, duplicate save, stale revision, incoming update with open note draft, and user-correction provenance. Assert no Understanding mutation endpoint or direct `state.json` editor exists.
 - Human verification: edit a note, restart, inspect saved data, and resolve a competing browser-tab edit; inspect Understanding and correct a learner judgment through a later Study interaction rather than a form.
 - Acceptance: note edits survive restart, remain visible, and cannot be silently overwritten; Understanding remains read-only and learner-state corrections retain provenance.
+
+  Evidence: `VaultRepository.saveNote()` applies note creation/editing through
+  the Task 2.1 journal with explicit state and note revisions, server-owned
+  `origin=user` provenance, operation replay, validation, and lossless state
+  index merging. The same-origin HTTP API exposes only note mutation. The UI
+  implements committed Markdown reading plus explicit editing, draft/saving/
+  saved/error/conflict states, immutable in-flight submissions, per-topic/note
+  draft retention, refresh/polling, incoming-revision conflict presentation,
+  and an unload warning for dirty drafts; Understanding has no mutation route
+  or editor. Second-round verification passes 11/11 focused Task 2.2 tests,
+  including three real Chromium scenarios, and `npm test` passes 63/63. All
+  write tests use copied synthetic temporary vaults with separate operational
+  state. See
+  [`task-2.2-evidence.md`](task-2.2-evidence.md).
 
 ## Phase 3 — Codex-backed Tutor and study control
 

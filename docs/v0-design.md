@@ -29,6 +29,32 @@ All views distinguish loading, empty, invalid, disconnected, and ready states. N
 
 Browsing and local editing work without a Codex connection. A browser refresh reloads committed records; pending drafts must be explicitly warned about or recoverable, never represented as saved.
 
+Task 2.2 implements the Notes half of this contract. The browser keeps a
+separate in-memory draft for each opened topic/note, warns before unloading a
+dirty page, polls and explicitly refreshes committed note revisions, and does
+not replace a dirty draft when a newer revision arrives. A competing update
+changes the editor to `conflict` and presents the latest committed body beside
+reload/discard choices. `saved` is shown only after the repository returns a
+durable commit result. Drafts are not persisted across a completed browser
+reload; the unload warning is the current protection. Understanding remains a
+read-only projection with no learner-state mutation command or `state.json`
+editor. Corrections to that projection remain deferred to the Study/Reducer
+workflow.
+
+Notes open in a committed Markdown reading view. Edit is explicit; New note
+opens an editor directly. Save and Cancel are editor commands, and Cancel asks
+before discarding changes. Leaving a dirty editor retains its draft but the
+reading view continues to show only committed content, with a visible action
+to resume the draft. Markdown is rendered by the server projection with HTML
+escaped and unsafe links removed.
+
+A note submission freezes its fields, expected revisions, operation/update
+IDs, and draft version. The request remains in flight independently of later
+typing or navigation. Its response advances the committed baseline but clears
+the draft only when no newer edit exists. An unchanged failed submission
+reuses its IDs on retry; a new submission after a successful commit uses new
+IDs. Saved is shown only after durable persistence.
+
 ## Learning domain
 
 **Topic State** is the durable learner model: topic identity, goal, current focus, understanding and supporting evidence, uncertainties, misconceptions, and next objective. These are conceptual fields to map onto the actual vault schema, not a replacement schema.

@@ -68,6 +68,17 @@ export function renderMarkdown(markdown, options = {}) {
       hasVisibleContent = true;
       index = rendered.index - 1;
     }
+    else if (/^>\s?/.test(line)) {
+      flushParagraph();
+      const quote = [];
+      while (index < lines.length && /^>\s?/.test(lines[index])) {
+        quote.push(lines[index].replace(/^>\s?/, ''));
+        index += 1;
+      }
+      output.push(`<blockquote>${renderMarkdown(quote.join('\n'))}</blockquote>`);
+      hasVisibleContent = true;
+      index -= 1;
+    }
     else if (!line.trim()) flushParagraph();
     else { paragraph.push(line); hasVisibleContent = true; }
   }
@@ -200,7 +211,7 @@ export function projectTopic(topic) {
     roadmap: Array.isArray(state.roadmap) ? state.roadmap.filter((item) => item && typeof item === 'object' && !Array.isArray(item)) : null,
     notes: Array.isArray(topic?.notes) ? topic.notes.map((note) => {
       const title = resolveNoteTitle(note);
-      return { id: note.id, title, preview: resolveNotePreview(note.body), index: note.index, revision: note.revision, html: renderMarkdown(note.body, { suppressLeadingHeading: title }) };
+      return { id: note.id, title, preview: resolveNotePreview(note.body), body: note.body, index: note.index, revision: note.revision, html: renderMarkdown(note.body, { suppressLeadingHeading: title }) };
     }) : [],
     sessions: Array.isArray(topic?.sessions) ? topic.sessions.map((session) => {
       const content = sessionContent(session.body);

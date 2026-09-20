@@ -158,10 +158,10 @@ started but any staged after-image or captured original is missing or fails
 fingerprint validation, evidence is retained and normal snapshots/writes are
 blocked until reliable recovery or explicit resolution.
 
-## Future write shape and checkpoints
+## Write shape and checkpoints
 
-Task 0.2 does not implement writes. The planned repository write contract for
-Phase 2/4 is:
+Tasks 2.1 and 2.2 implement the repository transaction shape used by manual
+note saves. Phase 4 will reuse it for reducer updates and checkpoints:
 
 1. Freeze a topic snapshot and its path fingerprints.
 2. Validate a complete proposed state merge, note operation, and checkpoint
@@ -174,6 +174,32 @@ Phase 2/4 is:
    existing `appliedUpdates` entry only as part of the canonical state update.
 5. Publish success only after all required files and the durable commit marker
    are complete.
+
+The Task 2.2 manual-note request accepts a validated note ID, Markdown body,
+optional title/kind/claim-status/source metadata, the expected state revision,
+the expected existing-note revision (or `null` for creation), and stable
+operation/update IDs. Body size is limited to 1 MiB, titles to 240 characters,
+metadata strings to 80 characters, and sources to a bounded array. The server
+sets `origin=user`; browser input cannot relabel provenance. Existing note
+index entries are cloned before supported fields are updated, so unknown
+fields, paths, and unrelated state remain intact. New notes use only the
+repository-derived path `topics/<topic-id>/notes/<note-id>.md`.
+
+A manual save writes `state.json` and the note body through the same journaled
+transaction. A stale state or note fingerprint returns conflict without
+overwriting either file. A duplicate operation returns its recorded result.
+Only a durable commit may report `saved: true`. Understanding remains a
+read-only projection: there is no learner-state mutation endpoint or direct
+state editor in Task 2.2.
+
+The browser freezes those request fields and IDs at submit time. Input entered
+while the request is in flight remains a separate dirty draft; commit success
+advances its expected note/state revisions without replacing that newer input.
+Only an acknowledgement for the current draft version may clear it and display
+Saved. Retrying an unchanged failed submission reuses the same operation and
+update IDs; editing after failure or saving after a successful commit starts a
+new logical request. Cancel never writes, and cancelling a new note creates no
+vault file.
 
 Existing Markdown files are never silently rewritten to add metadata. New
 Lattice checkpoints use a compact Markdown session document and a new

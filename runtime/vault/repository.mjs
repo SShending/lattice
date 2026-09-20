@@ -10,6 +10,9 @@ import { blobRevision } from './revisions.mjs';
 
 const OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REVISION = /^[0-9a-f]{40}$/;
+const NOTE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_NOTE_BODY_BYTES = 1024 * 1024;
+const MAX_NOTE_TITLE_LENGTH = 240;
 
 export class RepositoryError extends Error {
   constructor(code, message, details = {}) {
@@ -220,8 +223,124 @@ export class VaultRepository {
     });
   }
 
+  async listTopics() {
+    await this.ensureReady();
+    return this.#enqueue(async () => {
+      if (this.recoveryRequired) await this.#recoverOrThrow();
+      return this.reader.listTopics();
+    });
+  }
+
+  async saveNote(input) {
+    await this.ensureReady();
+    return this.#enqueue(async () => {
+      if (this.recoveryRequired) await this.#recoverOrThrow();
+      try { return await this.#saveNote(input); }
+      catch (error) {
+        if (error instanceof RepositoryError && ['invalid', 'schema', 'writer-locked', 'closed'].includes(error.code) && !error.afterCanonicalMutation) throw error;
+        this.recoveryRequired = true;
+        try { await this.#recoverOrThrow(); } catch {}
+        throw error;
+      }
+    });
+  }
+
+  async #saveNote(input) {
+    const request = this.#validateNoteRequest(input);
+    const snapshot = await this.#snapshot(request.topicId);
+    const current = snapshot.notes.find((note) => note.id === request.noteId) || null;
+    const notePath = current?.index.path || `topics/${request.topicId}/notes/${request.noteId}.md`;
+    const provenance = { ...request.provenance, action: current ? 'edit' : 'create' };
+    const expectedStateRevision = request.expectedStateRevision;
+    const expectedNoteRevision = request.expectedRevision;
+    const operationPath = path.join(this.operationsRoot, `${request.operationId}.json`);
+    const existingOperation = await readJsonFile(operationPath);
+    if (existingOperation) {
+      const result = await this.#replayOrRecover(existingOperation, {
+        ...request,
+        files: [],
+        expectedRevisions: {},
+      });
+      return { ...result, noteId: request.noteId, origin: 'user', provenance: result.metadata?.provenance || provenance };
+    }
+    const state = structuredClone(snapshot.state);
+    const notes = state.notes && typeof state.notes === 'object' && !Array.isArray(state.notes) ? state.notes : {};
+    const previousIndex = current ? structuredClone(current.index) : null;
+    const index = previousIndex || {
+      id: request.noteId,
+      path: notePath,
+      updatedAt: now(),
+    };
+    if (index.id !== request.noteId || index.path !== notePath) throw new RepositoryError('schema', `note identity mismatch: ${request.noteId}`);
+    if (request.title !== undefined) {
+      if (request.title === null || request.title === '') delete index.title;
+      else index.title = request.title;
+    }
+    if (request.kind !== undefined) {
+      if (request.kind === null || request.kind === '') delete index.kind;
+      else index.kind = request.kind;
+    }
+    if (request.claimStatus !== undefined) {
+      if (request.claimStatus === null || request.claimStatus === '') delete index.claimStatus;
+      else index.claimStatus = request.claimStatus;
+    }
+    if (request.sources !== undefined) {
+      if (request.sources === null) delete index.sources;
+      else index.sources = structuredClone(request.sources);
+    }
+    index.updatedAt = now();
+    notes[request.noteId] = index;
+    state.notes = notes;
+    const files = [
+      { relativePath: snapshot.statePath, content: jsonBytes(state) },
+      { relativePath: notePath, content: Buffer.from(request.body, 'utf8') },
+    ];
+    const result = await this.#commit({
+      topicId: request.topicId,
+      operationId: request.operationId,
+      updateId: request.updateId,
+      origin: 'user',
+      files,
+      expectedRevisions: {
+        [snapshot.statePath]: expectedStateRevision,
+        [notePath]: expectedNoteRevision,
+      },
+      metadata: {
+        noteId: request.noteId,
+        action: current ? 'edit' : 'create',
+        provenance,
+      },
+    });
+    return { ...result, noteId: request.noteId, origin: 'user', provenance };
+  }
+
+  #validateNoteRequest(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new RepositoryError('invalid', 'note request is required');
+    const allowed = new Set(['topicId', 'noteId', 'body', 'title', 'kind', 'claimStatus', 'sources', 'expectedRevision', 'expectedStateRevision', 'operationId', 'updateId']);
+    for (const key of Object.keys(input)) if (!allowed.has(key)) throw new RepositoryError('invalid', `unsupported note field: ${key}`);
+    let topicId;
+    try { topicId = assertTopicId(input.topicId); }
+    catch { throw new RepositoryError('invalid', `invalid topic: ${input.topicId}`); }
+    const noteId = typeof input.noteId === 'string' && NOTE_ID.test(input.noteId) ? input.noteId : null;
+    if (!noteId) throw new RepositoryError('invalid', 'noteId is invalid');
+    if (typeof input.body !== 'string' || Buffer.byteLength(input.body, 'utf8') > MAX_NOTE_BODY_BYTES) throw new RepositoryError('invalid', 'note body must be a UTF-8 string no larger than 1 MiB');
+    const validateOptionalString = (value, name, max = 80) => {
+      if (value !== undefined && value !== null && (typeof value !== 'string' || value.length > max)) throw new RepositoryError('invalid', `${name} is invalid`);
+      return value;
+    };
+    const title = validateOptionalString(input.title, 'title', MAX_NOTE_TITLE_LENGTH);
+    const kind = validateOptionalString(input.kind, 'kind');
+    const claimStatus = validateOptionalString(input.claimStatus, 'claimStatus');
+    if (input.sources !== undefined && input.sources !== null && (!Array.isArray(input.sources) || input.sources.length > 100)) throw new RepositoryError('invalid', 'sources must be an array of at most 100 entries');
+    const operationId = assertOperationId(input.operationId, 'operationId');
+    const updateId = assertOperationId(input.updateId, 'updateId');
+    if (typeof input.expectedStateRevision !== 'string' || !REVISION.test(input.expectedStateRevision)) throw new RepositoryError('invalid', 'expectedStateRevision is required');
+    if (input.expectedRevision !== null && (typeof input.expectedRevision !== 'string' || !REVISION.test(input.expectedRevision))) throw new RepositoryError('invalid', 'expectedRevision must be a revision or null');
+    const provenance = { origin: 'user', actor: 'user', resource: 'note', noteId, action: 'edit' };
+    return { topicId, noteId, body: input.body, title, kind, claimStatus, sources: input.sources, expectedRevision: input.expectedRevision, expectedStateRevision: input.expectedStateRevision, operationId, updateId, provenance };
+  }
+
   async #snapshot(topicId) {
-    assertTopicId(topicId);
     const topic = await this.reader.readTopic(topicId);
     const manifest = await this.reader.readManifest();
     const statePath = manifest.value.topics?.[topicId]?.statePath;
@@ -269,7 +388,7 @@ export class VaultRepository {
       expectedRevisions: request.expectedRevisions,
       files: [],
       metadata: request.metadata,
-      operation: { operationId: request.operationId, updateId: request.updateId, topicId: request.topicId, origin: request.origin, status: 'pending', saved: false },
+      operation: { operationId: request.operationId, updateId: request.updateId, topicId: request.topicId, origin: request.origin, metadata: request.metadata, status: 'pending', saved: false },
     };
     await writeDurable(path.join(transactionPath, 'manifest.json'), jsonBytes(stagingJournal));
     const transaction = await this.#prepare(request);
@@ -434,6 +553,7 @@ export class VaultRepository {
       status: 'pending',
       saved: false,
       createdAt: manifest.createdAt,
+      metadata: request.metadata,
     };
     manifest.operation = operation;
     return { transactionPath, manifest, operation, request };
@@ -598,7 +718,9 @@ export class VaultRepository {
 
   #validateRequest(input) {
     if (!input || typeof input !== 'object') throw new RepositoryError('invalid', 'transaction request is required');
-    const topicId = assertTopicId(input.topicId);
+    let topicId;
+    try { topicId = assertTopicId(input.topicId); }
+    catch { throw new RepositoryError('invalid', `invalid topic: ${input.topicId}`); }
     const operationId = assertOperationId(input.operationId, 'operationId');
     const updateId = assertOperationId(input.updateId, 'updateId');
     const origin = input.origin === 'user' || input.origin === 'reducer' ? input.origin : null;
@@ -680,6 +802,8 @@ export class VaultRepository {
       committedAt: commit.committedAt,
       targetRevisions: commit.targetRevisions || Object.fromEntries(manifest.files.map((file) => [file.relativePath, file.targetRevision])),
       noOp: Boolean(manifest.noOp),
+      origin: manifest.origin,
+      metadata: manifest.metadata || {},
     };
   }
 

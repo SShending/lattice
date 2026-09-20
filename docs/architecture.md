@@ -33,6 +33,13 @@ The planned launcher starts one local server, acquires the vault writer lock, re
 
 Commands cover listing/selecting topics through the global workspace selector, loading topic views, starting/resuming a study session, submitting/cancelling a turn, retrying finalization, and saving notes. Understanding is a read-only projection; learner-state changes are emitted by the Study/Reducer path only. Mutation requests carry stable operation IDs and expected revisions. Responses return operation status and committed revision or an explicit validation/conflict error.
 
+Task 2.2 exposes only `PUT /api/topics/:topicId/notes/:noteId` as a learning
+data mutation endpoint. The server derives both identities from the URL,
+rejects mismatched body identities and cross-origin requests, fixes provenance
+to `origin=user`, and delegates the state-index plus Markdown update to the
+Vault Repository. The browser never supplies a filesystem path or trusted
+origin. There is intentionally no state or Understanding mutation endpoint.
+
 Events carry an event ID/sequence, session/topic/turn identity, phase, and relevant revision. The UI ignores duplicate events and events for unrelated views. SSE reconnect requests missed events when retained; otherwise it fetches a fresh authoritative snapshot and active-turn status. Event replay is a UI convenience, never the durability authority.
 
 Use domain events such as answer delta, phase changed, approval requested, learning committed, and turn failed. These are proposed Lattice event names, not claims about Codex protocol names. API writes validate resource IDs and fields on the server; a browser-provided path is never trusted.
@@ -103,7 +110,7 @@ their Markdown bodies are opaque. Do not infer a roadmap, add frontmatter,
 regenerate README projections, or overwrite unknown fields. Any migration
 would require explicit approval in a later task.
 
-The local vault remains authoritative. Browser caches, Codex history, and any search/index projections are disposable. Operational transaction metadata is separate from learning content but must be stored locally with a documented recovery location. No database, vector store, or GitHub call is required in the study path. Git commits/pushes are user-managed and are not part of successful persistence. Phase 1 implements only read-only `runtime/vault/*.mjs`, `server/*.mjs`, and `web/*` modules; writes and Codex integration remain later-phase work.
+The local vault remains authoritative. Browser caches, Codex history, and any search/index projections are disposable. Operational transaction metadata is separate from learning content but must be stored locally with a documented recovery location. No database, vector store, or GitHub call is required in the study path. Git commits/pushes are user-managed and are not part of successful persistence. Phase 1 supplied the read projections; Tasks 2.1 and 2.2 add the repository transaction path and manual Notes editing. Codex integration and learner-state mutation remain later-phase work.
 
 ## Persistence and edit invariants
 
@@ -122,5 +129,21 @@ is not a no-op.
 10. Note identity and update IDs prevent duplicate creation on retries. A note failure also prevents successful turn completion.
 
 Manual note saves use this same path with `origin=user`, expected revisions, and a compact change record. Understanding has no manual save path: learner-state corrections are attributable to a Study/Reducer update, with user corrections distinguishable from assessed evidence. Rejected edits leave canonical files intact and retain the browser draft. On conflict show the latest content and the draft; require explicit reconciliation or reload rather than last-write-wins.
+
+The Notes UI separates committed reading state from editable draft state. Each
+save captures an immutable request and draft version; its network lifecycle is
+not inferred from the mutable editor status. A successful response updates the
+saved revision baseline, returns to reading only if that submitted version is
+still current, and otherwise leaves newer input as an unsaved draft. Navigation
+cannot redirect an old response into another note/topic. Retry of the same
+failed request retains its operation identity, while the next logical save
+after a commit receives fresh operation and update IDs.
+
+For an existing note, the repository clones its complete state index entry and
+changes only fields supported by the note editor, preserving unknown metadata.
+For a new note it creates `topics/<topic-id>/notes/<note-id>.md` and the matching
+state index entry. Both cases commit the complete `state.json` after-image and
+the Markdown body together, with explicit state and note revisions. Repeated
+operation IDs replay the durable outcome rather than producing another edit.
 
 Learning proposals are automatically persisted only when valid and non-conflicting. Keep stable reducer inputs and validated proposals as needed for recovery; minimize retained transcripts. Define cleanup/retention in Phase 0 so pending transactions are never removed prematurely. Ordinary filesystem viewers may observe intermediate files during recovery; the consistency guarantee applies to Lattice readers and completed operations, not arbitrary outside readers.

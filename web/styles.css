@@ -139,6 +139,7 @@ h2 { margin: 0; font-size: 18px; line-height: 1.25; }.page-header h1 + .page-des
 
 .note-reader { padding: 25px clamp(22px, 4vw, 42px); }
 .note-markdown { max-width: 72ch; line-height: 1.65; overflow-wrap: anywhere; }
+.note-markdown blockquote { margin: 16px 0; padding: 2px 0 2px 15px; color: var(--ink-soft); border-left: 3px solid var(--line-strong); }
 .note-markdown p { margin: 10px 0 14px; }
 .note-markdown ul, .note-markdown ol { margin: 11px 0 16px; padding-left: 24px; }
 .note-markdown li { margin: 6px 0; padding-left: 3px; }
@@ -147,6 +148,37 @@ h2 { margin: 0; font-size: 18px; line-height: 1.25; }.page-header h1 + .page-des
 .note-source-details { margin-top: 26px; padding-top: 13px; border-top: 1px solid var(--line); }
 .note-source-details .note-source { margin-top: 9px; padding-top: 0; border-top: 0; }
 .note-index-row:focus-visible { outline-offset: -2px; }
+.button-primary, .button-secondary { min-height: 32px; padding: 7px 11px; border: 1px solid var(--line-strong); border-radius: 4px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.button-primary { color: var(--white); background: var(--teal); border-color: var(--teal); }
+.button-secondary { color: var(--ink-soft); background: var(--white); }
+.button-primary:hover, .button-secondary:hover { filter: brightness(.97); }
+.note-editor { min-width: 0; }
+.note-form { display: grid; gap: 15px; margin-top: 22px; }
+.note-form label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.note-form input, .note-form textarea, .note-form select { width: 100%; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 4px; font: inherit; font-size: 13px; }
+.note-form input, .note-form select { min-height: 36px; padding: 7px 9px; }
+.note-form textarea { min-height: 280px; padding: 11px; resize: vertical; line-height: 1.55; }
+.note-form input:focus, .note-form textarea:focus, .note-form select:focus { outline: 2px solid var(--teal-soft); border-color: var(--teal); }
+.note-form-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.note-form-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+.note-form-hint { color: var(--muted); font-size: 11px; }
+.note-form-message { min-height: 18px; margin: 0; color: var(--coral); font-size: 12px; }
+.note-reader-actions { margin-top: 22px; }
+.note-draft-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 18px; padding: 11px 13px; color: #765729; background: var(--gold-soft); border-left: 3px solid var(--gold); font-size: 12px; }
+.note-draft-notice span { flex: 1 1 220px; color: var(--ink-soft); }
+.note-save-message { margin: 16px 0 0; color: var(--teal); font-size: 12px; }
+.note-status.draft { color: var(--gold); background: var(--gold-soft); }
+.note-status.saving { color: var(--gold); background: var(--gold-soft); }
+.note-status.conflict, .note-status.error { color: var(--coral); background: #f9e8e3; }
+.note-index .section-heading { align-items: center; }
+.note-index-actions { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }
+.note-index-empty { padding: 12px 3px; }
+.note-conflict { display: grid; gap: 8px; margin-top: 18px; padding: 13px 14px; color: #713d35; background: var(--coral-soft); border-left: 3px solid var(--coral); font-size: 12px; }
+.note-conflict > span { color: var(--ink-soft); }
+.note-conflict details { margin-top: 3px; }
+.note-conflict-latest { margin-top: 8px; padding: 10px; background: rgba(255, 253, 249, .72); border: 1px solid rgba(169, 82, 67, .22); }
+.note-conflict-latest pre { max-height: 180px; margin: 8px 0 0; overflow: auto; white-space: pre-wrap; font: 12px/1.5 ui-monospace, SFMono-Regular, monospace; }
+.note-conflict-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Historical checkpoints stay compact until a learner chooses to inspect one. */
 .path-preview-link { display: inline-block; margin-top: 12px; white-space: nowrap; }
@@ -224,4 +256,6 @@ h2 { margin: 0; font-size: 18px; line-height: 1.25; }.page-header h1 + .page-des
   .note-reader { order: 1; padding: 20px 16px; }
   .note-index { order: 2; }
   .note-reader-top { flex-direction: column; }
+  .note-form-meta { grid-template-columns: 1fr; }
+  .note-form-actions { align-items: flex-start; flex-direction: column; }
 }
