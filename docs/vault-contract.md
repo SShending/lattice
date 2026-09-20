@@ -152,6 +152,11 @@ because canonical files were not touched. If any expected
 or current fingerprint differs, recovery returns a retained conflict and will
 not overwrite the external version. The repository never treats a partial
 multi-file replacement as a completed operation.
+Transaction paths are normalized and must remain within the selected topic;
+path aliases and duplicate resolved targets are rejected. If replacement has
+started but any staged after-image or captured original is missing or fails
+fingerprint validation, evidence is retained and normal snapshots/writes are
+blocked until reliable recovery or explicit resolution.
 
 ## Future write shape and checkpoints
 

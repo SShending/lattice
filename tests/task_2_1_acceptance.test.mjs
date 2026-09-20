@@ -206,6 +206,55 @@ test('write targets reject symlink parent escapes', async () => {
   } finally { await repository.close(); await cleanup(item); }
 });
 
+test('write targets reject normalized cross-topic aliases without mutating either topic', async () => {
+  const item = await fixture();
+  const repository = new VaultRepository(item.root, { stateRoot: item.stateRoot });
+  try {
+    await repository.initialize();
+    const snapshot = await repository.snapshot('complete-topic');
+    const originalState = await fs.readFile(path.join(item.root, snapshot.statePath));
+    const legacyRoot = path.join(item.root, 'topics', 'legacy-topic');
+    const legacyBefore = await fs.readdir(legacyRoot, { withFileTypes: true });
+    const legacyFilesBefore = await Promise.all(legacyBefore.filter((entry) => entry.isFile()).map(async (entry) => [entry.name, await fs.readFile(path.join(legacyRoot, entry.name))]));
+    const escaped = 'topics/complete-topic/../legacy-topic/notes/audit-cross.md';
+    await assert.rejects(() => repository.commit({ topicId: 'complete-topic', operationId: 'op-cross-topic', updateId: 'update-cross-topic', origin: 'user', files: [
+      { relativePath: snapshot.statePath, content: originalState },
+      { relativePath: escaped, content: '# must not escape\n' },
+    ], expectedRevisions: { [snapshot.statePath]: snapshot.stateRevision, [escaped]: null } }), (error) => error instanceof RepositoryError && error.code === 'invalid');
+    assert.deepEqual(await fs.readFile(path.join(item.root, snapshot.statePath)), originalState);
+    assert.equal(await fs.stat(path.join(item.root, 'topics/legacy-topic/notes/audit-cross.md')).then(() => true, () => false), false);
+    for (const [name, bytes] of legacyFilesBefore) assert.deepEqual(await fs.readFile(path.join(legacyRoot, name)), bytes);
+  } finally { await repository.close(); await cleanup(item); }
+});
+
+test('corrupt staged after-image blocks reads and later writes while retaining evidence', async () => {
+  const item = await fixture();
+  let corrupted = false;
+  const repository = new VaultRepository(item.root, { stateRoot: item.stateRoot, failureInjector: async (stage, context) => {
+    if (stage === 'after-file-replace' && context.index === 0 && !corrupted) {
+      corrupted = true;
+      await fs.writeFile(path.join(repository.transactionsRoot, context.operationId, 'staged/001.bin'), 'BROKEN');
+    }
+  }});
+  try {
+    await repository.initialize();
+    const input = commitInput('corrupt-staged', await proposal(repository, 'corrupt-staged'));
+    await assert.rejects(() => repository.commit(input), (error) => error instanceof RepositoryError);
+    await assert.rejects(() => repository.snapshot('complete-topic'), (error) => error.code === 'recovery-required');
+    await assert.rejects(() => repository.commit({ ...input, operationId: 'op-after-corrupt', updateId: 'update-after-corrupt' }), (error) => error.code === 'recovery-required');
+    assert.equal(await fs.readFile(path.join(repository.transactionsRoot, input.operationId, 'staged/001.bin'), 'utf8'), 'BROKEN');
+    await repository.close();
+
+    const reopened = new VaultRepository(item.root, { stateRoot: item.stateRoot });
+    try {
+      await reopened.initialize();
+      await assert.rejects(() => reopened.snapshot('complete-topic'), (error) => error.code === 'recovery-required');
+      await assert.rejects(() => reopened.commit({ ...input, operationId: 'op-after-restart-corrupt', updateId: 'update-after-restart-corrupt' }), (error) => error.code === 'recovery-required');
+      assert.equal(await fs.readFile(path.join(reopened.transactionsRoot, input.operationId, 'staged/001.bin'), 'utf8'), 'BROKEN');
+    } finally { await reopened.close().catch(() => {}); }
+  } finally { await repository.close().catch(() => {}); await cleanup(item); }
+});
+
 test('learning no-op requires state and checkpoint and new indexes require files', async () => {
   const item = await fixture();
   const repository = new VaultRepository(item.root, { stateRoot: item.stateRoot });

@@ -72,6 +72,9 @@ readers wait in the same FIFO lifecycle queue as commits, recovery, and close,
 so they never intentionally expose a mixed committed snapshot. A fingerprint
 mismatch returns a retained conflict and rolls back only files still bearing
 this operation's target fingerprint; an external edit is never overwritten.
+Normalized target paths must remain inside the selected topic. Damaged staged
+after-images after canonical replacement retain evidence and block reads and
+writes until reliable recovery or explicit resolution.
 
 Resolve resource paths under the configured vault root, reject traversal and escaping symlinks, and sanitize rendered Markdown/HTML. Keep account secrets and sensitive protocol payloads out of browser storage, events, and logs. Send only selected learning context to Codex; never claim model execution stays on device.
 

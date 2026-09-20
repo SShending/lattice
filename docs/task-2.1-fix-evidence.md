@@ -20,7 +20,7 @@ original review baseline and is intentionally unchanged.
 On Linux x86_64 with Node.js 22:
 
 ```text
-node --test tests/task_2_1_acceptance.test.mjs   # 14/14 passing
+node --test tests/task_2_1_acceptance.test.mjs   # 16/16 passing
 node --test tests/persistence.test.mjs            # 15/15 passing
 ```
 
@@ -29,7 +29,7 @@ injection uses copied synthetic vaults under temporary directories. The real
 learning-vault is never used for destructive or failure testing.
 
 The complete Linux suite (`npm test`, with loopback access for the existing
-HTTP tests) passes 50/50 tests.
+HTTP tests) passes 52/52 tests.
 
 ## Recovery contract clarification
 
@@ -48,3 +48,11 @@ lock implementation before being claimed as supported. Filesystem power-loss
 durability is verified through flushed writes, directory syncs, deterministic
 failure injection, and process termination; actual sudden power removal is not
 reproducibly testable in this environment.
+
+## Second-round P1 fixes (2026-09-20)
+
+Normalized transaction paths must remain inside the selected topic, and duplicate resolved targets are rejected before staging. The `../legacy-topic/...` probe is rejected as an invalid request; regression assertions verify that both the selected state and the other topic remain unchanged.
+
+After canonical replacement begins, recovery verifies every staged after-image and captured original. A damaged staged file is retained as evidence, marks the transaction recovery-required, and blocks snapshots and later writes until reliable recovery or explicit resolution. Pure request validation failures remain non-mutating and do not enter this barrier.
+
+Additional focused coverage: `node --test tests/task_2_1_acceptance.test.mjs tests/persistence.test.mjs` passes 31/31 on Linux x86_64 with Node.js 22. The complete `npm test` suite is run after these focused tests.

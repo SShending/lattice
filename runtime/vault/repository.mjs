@@ -239,7 +239,7 @@ export class VaultRepository {
       if (this.recoveryRequired) await this.#recoverOrThrow();
       try { return await this.#commit(input); }
       catch (error) {
-        if (error instanceof RepositoryError && ['invalid', 'schema', 'metadata-corrupt', 'writer-locked', 'closed'].includes(error.code)) throw error;
+        if (error instanceof RepositoryError && ['invalid', 'schema', 'writer-locked', 'closed'].includes(error.code) && !error.afterCanonicalMutation) throw error;
         this.recoveryRequired = true;
         try { await this.#recoverOrThrow(); } catch {}
         throw error;
@@ -336,7 +336,17 @@ export class VaultRepository {
     }
     const operation = await readJsonFile(operationPath) || manifest.operation;
     if (!operation) throw new RepositoryError('metadata-corrupt', `missing operation record: ${manifest.operationId}`);
-    return this.#apply({ transactionPath, manifest, operation, request: this.#requestFromManifest(manifest) });
+    try {
+      await this.#verifyStaged(transactionPath, manifest);
+      return await this.#apply({ transactionPath, manifest, operation, request: this.#requestFromManifest(manifest) });
+    } catch (error) {
+      if (error?.code !== 'metadata-corrupt') throw error;
+      const failure = { status: 'pending', saved: false, operationId: manifest.operationId, updateId: manifest.updateId, topicId: manifest.topicId, error: error.message, recoverable: false };
+      const retained = { ...manifest, status: 'pending', recoveryRequired: true, lastError: failure };
+      await writeDurable(path.join(transactionPath, 'manifest.json'), jsonBytes(retained));
+      await writeDurable(operationPath, jsonBytes({ ...operation, status: 'pending', saved: false, lastError: failure }));
+      return failure;
+    }
   }
 
   #requestFromManifest(manifest) {
@@ -434,6 +444,7 @@ export class VaultRepository {
     let manifest = transaction.manifest;
     const operationPath = path.join(this.operationsRoot, `${manifest.operationId}.json`);
     try {
+      await this.#verifyStaged(transactionPath, manifest);
       await this.#checkExpected(manifest, request);
       manifest = { ...manifest, status: 'applying', applyingAt: now() };
       await writeDurable(path.join(transactionPath, 'manifest.json'), jsonBytes(manifest));
@@ -460,10 +471,12 @@ export class VaultRepository {
         await this.#inject('after-file-replace', request, file);
       }
       for (const file of manifest.files) {
+        await this.#assertTargetSafe(manifest.topicId, file.relativePath);
         const target = this.#secureTarget(manifest.topicId, file.relativePath);
         const current = await readOptional(target);
         if (relativeFingerprint(current) !== file.targetRevision) throw new TransactionConflictError(`target verification failed: ${file.relativePath}`, { relativePath: file.relativePath, operationId: manifest.operationId });
       }
+      await this.#verifyStaged(transactionPath, manifest);
       await this.#inject('before-commit-marker', request, manifest);
       const committedAt = now();
       const result = this.#committedResult(manifest, { committedAt, targetRevisions: Object.fromEntries(manifest.files.map((file) => [file.relativePath, file.targetRevision])) });
@@ -484,6 +497,9 @@ export class VaultRepository {
         await writeDurable(operationPath, jsonBytes({ ...transaction.operation, status: 'conflict', saved: false, result: conflict }));
         return conflict;
       }
+      if (manifest.status === 'applying' || manifest.files?.some((file) => file.applied)) {
+        error.afterCanonicalMutation = true;
+      }
       const failure = { status: 'pending', saved: false, operationId: manifest.operationId, updateId: manifest.updateId, topicId: manifest.topicId, error: error.message, recoverable: true };
       await writeDurable(operationPath, jsonBytes({ ...transaction.operation, status: 'pending', saved: false, lastError: failure }));
       if (error?.code === 'injected-failure') throw new TransactionError(error.message || 'deterministic failure injection', failure);
@@ -494,6 +510,7 @@ export class VaultRepository {
   async #checkExpected(manifest, request) {
     const mismatches = [];
     for (const file of manifest.files) {
+      await this.#assertTargetSafe(manifest.topicId, file.relativePath);
       const current = await readOptional(this.#secureTarget(manifest.topicId, file.relativePath));
       const actual = relativeFingerprint(current);
       const recoveryTarget = manifest.status === 'applying' && actual === file.targetRevision;
@@ -503,6 +520,7 @@ export class VaultRepository {
     if (request.expectedRevisions) {
       for (const [relativePath, expected] of Object.entries(request.expectedRevisions)) {
         if (!manifest.files.some((file) => file.relativePath === relativePath)) {
+          await this.#assertTargetSafe(request.topicId, relativePath);
           const actual = relativeFingerprint(await readOptional(this.#secureTarget(request.topicId, relativePath)));
           if (actual !== expected) throw new TransactionConflictError(`read-set changed: ${relativePath}`, { relativePath, expected, actual });
         }
@@ -513,6 +531,7 @@ export class VaultRepository {
   async #rollbackApplied(transaction, manifest) {
     for (const file of manifest.files || []) {
       if (!file.applied) continue;
+      await this.#assertTargetSafe(manifest.topicId, file.relativePath);
       const target = this.#secureTarget(manifest.topicId, file.relativePath);
       const current = await readOptional(target);
       if (relativeFingerprint(current) !== file.targetRevision) continue;
@@ -539,7 +558,13 @@ export class VaultRepository {
     try { assertIndexedPath(topicId, relativePath); }
     catch { throw new RepositoryError('invalid', `transaction path is outside topic: ${relativePath}`); }
     if (relativePath.endsWith('/README.md')) throw new RepositoryError('invalid', 'README projections are not transaction targets');
-    return resolveVaultPath(this.root, relativePath);
+    const normalized = path.posix.normalize(relativePath);
+    if (normalized !== relativePath || normalized.includes('\\')) throw new RepositoryError('invalid', `transaction path alias is not allowed: ${relativePath}`);
+    const target = resolveVaultPath(this.root, relativePath);
+    const topicRoot = resolveVaultPath(this.root, `topics/${topicId}`);
+    const relative = path.relative(topicRoot, target);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new RepositoryError('invalid', `transaction path is outside topic: ${relativePath}`);
+    return target;
   }
 
   async #assertTargetSafe(topicId, relativePath) {
@@ -557,6 +582,20 @@ export class VaultRepository {
     if (topicReal !== topicRoot) throw new RepositoryError('invalid', `topic path is not canonical: ${topicId}`);
   }
 
+  async #verifyStaged(transactionPath, manifest) {
+    for (const file of manifest.files || []) {
+      await this.#assertTargetSafe(manifest.topicId, file.relativePath);
+      const staged = await fs.readFile(path.join(transactionPath, file.stagePath)).catch(() => null);
+      if (!staged || blobRevision(staged) !== file.targetRevision) {
+        throw new RepositoryError('metadata-corrupt', `staged content fingerprint mismatch: ${file.relativePath}`);
+      }
+      const original = await fs.readFile(path.join(transactionPath, file.originalPath)).catch(() => null);
+      if (!original || (file.observedRevision !== null && blobRevision(original) !== file.observedRevision) || (file.observedRevision === null && original.length !== 0)) {
+        throw new RepositoryError('metadata-corrupt', `original content fingerprint mismatch: ${file.relativePath}`);
+      }
+    }
+  }
+
   #validateRequest(input) {
     if (!input || typeof input !== 'object') throw new RepositoryError('invalid', 'transaction request is required');
     const topicId = assertTopicId(input.topicId);
@@ -568,11 +607,14 @@ export class VaultRepository {
     if (!input.expectedRevisions || typeof input.expectedRevisions !== 'object' || Array.isArray(input.expectedRevisions)) throw new RepositoryError('invalid', 'expectedRevisions is required');
     const expectedRevisions = { ...input.expectedRevisions };
     const seen = new Set();
+    const resolvedTargets = new Set();
     const files = (input.files || []).map((entry) => {
       if (!entry || typeof entry.relativePath !== 'string' || seen.has(entry.relativePath)) throw new RepositoryError('invalid', 'transaction files must have unique relative paths');
       seen.add(entry.relativePath);
       if (entry.content === undefined || entry.content === null) throw new RepositoryError('invalid', `missing content for ${entry.relativePath}`);
-      this.#secureTarget(topicId, entry.relativePath);
+      const target = this.#secureTarget(topicId, entry.relativePath);
+      if (resolvedTargets.has(target)) throw new RepositoryError('invalid', `duplicate transaction target: ${entry.relativePath}`);
+      resolvedTargets.add(target);
       if (!Object.hasOwn(expectedRevisions, entry.relativePath)) throw new RepositoryError('invalid', `missing expected revision for ${entry.relativePath}`);
       const expected = expectedRevisions[entry.relativePath];
       if (expected !== null && (typeof expected !== 'string' || !REVISION.test(expected))) throw new RepositoryError('invalid', `invalid expected revision for ${entry.relativePath}`);

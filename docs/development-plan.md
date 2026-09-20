@@ -87,7 +87,7 @@ Source paths below are the selected module locations. Each phase depends on the 
   rollback, atomic replacements, durable commit marker, operation/update
   idempotency, and startup recovery. `node --test tests/persistence.test.mjs`
   passes 15/15 synthetic persistence tests and `node --test
-  tests/task_2_1_acceptance.test.mjs` passes 14/14 focused acceptance
+  tests/task_2_1_acceptance.test.mjs` passes 16/16 focused acceptance
   regressions, including normal state+note+checkpoint behavior, duplicate
   replay, stale and external conflicts, the
   one-writer rule, deterministic failures during staging and after each
